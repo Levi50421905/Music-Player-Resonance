@@ -147,7 +147,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
         WebkitBackgroundClip: "text",
         WebkitTextFillColor: "transparent",
       }}>
-        Welcome to Resonance
+        Welcome to Sonarix
       </h1>
 
       <p style={{ color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7, marginBottom: 32 }}>
@@ -207,7 +207,7 @@ function StepPick({ onScan }: { onScan: () => void }) {
         Pilih Folder Musik
       </h2>
       <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.7, marginBottom: 32 }}>
-        Resonance akan scan semua file audio di dalam folder<br />
+        Sonarix akan scan semua file audio di dalam folder<br />
         yang kamu pilih, termasuk subfolder.
       </p>
 

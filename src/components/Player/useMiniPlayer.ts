@@ -56,7 +56,7 @@ export function useMiniPlayer() {
 
       const win = new WebviewWindow("mini", {
         url:         "/#/mini",
-        title:       "Resonance Mini",
+        title:       "Sonarix Mini",
         width:       340,
         height:      68,
         minWidth:    280,

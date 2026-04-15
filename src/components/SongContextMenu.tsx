@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef } from "react";
-import type { Song } from "../../lib/db";
+import type { Song } from "../lib/db";
 
 export interface Playlist {
   id: number;

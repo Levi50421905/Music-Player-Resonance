@@ -108,7 +108,7 @@ export function useSettingsInit() {
     // Bahasa disimpan di localStorage terpisah oleh i18n.ts (key: "resonance-lang")
     // Kita baca dan terapkan agar seluruh app menggunakan bahasa yang tersimpan
     try {
-      const savedLang = localStorage.getItem("resonance-lang");
+      const savedLang = localStorage.getItem("sonarix-lang");
       if (savedLang === "id" || savedLang === "en") {
         setLang(savedLang);
         document.documentElement.lang = savedLang;

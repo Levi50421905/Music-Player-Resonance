@@ -313,7 +313,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
 
   const renderRow = (song: Song, i: number, contextList: Song[]) => {
     const rowIdx = absoluteIdx++;
-    const isActive   = song.id === currentSong?.id;
+    const isActive = !!currentSong?.id && song.id === currentSong.id;
     const isSelected = selected.has(song.id);
     const isFocused  = focusedRowIdx === rowIdx;
     const isNew      = isNewTrack(song.date_added, song.play_count);

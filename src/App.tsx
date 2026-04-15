@@ -190,13 +190,13 @@ export default function App() {
   const [isDragOver, setIsDragOver]         = useState(false);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    try { return localStorage.getItem("resonance-sidebar-collapsed") === "true"; } catch { return false; }
+    try { return localStorage.getItem("Sonarix-sidebar-collapsed") === "true"; } catch { return false; }
   });
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(v => {
       const next = !v;
-      try { localStorage.setItem("resonance-sidebar-collapsed", String(next)); } catch {}
+      try { localStorage.setItem("Sonarix-sidebar-collapsed", String(next)); } catch {}
       return next;
     });
   }, []);
@@ -571,7 +571,7 @@ export default function App() {
           border: "2px solid #7C3AED", borderTopColor: "transparent",
           animation: "spin 0.8s linear infinite",
         }} />
-        <span style={{ fontSize: 13, color: "#7a7a96" }}>Loading Resonance…</span>
+        <span style={{ fontSize: 13, color: "#7a7a96" }}>Loading Sonarix…</span>
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
@@ -615,7 +615,7 @@ export default function App() {
             {/* Logo */}
             <div className="logo">
               <div className="logo-icon">♪</div>
-              <span className="logo-text">Resonance</span>
+              <span className="logo-text">Sonarix</span>
             </div>
 
             {/* Primary tabs */}

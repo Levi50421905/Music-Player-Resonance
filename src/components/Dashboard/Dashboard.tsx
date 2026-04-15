@@ -400,7 +400,7 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
                 {t.rateTracksToSee}
               </p>
             ) : (
-              topByRating.slice(0, 6).map((song, i, arr) => (
+              topByRating.slice(0, 6).map((song: Song, i: number, arr: Song[]) => (
                 <TrackRow
                   key={song.id} song={song} rank={i + 1}
                   onPlay={() => onPlay(topByRating, i)}

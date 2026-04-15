@@ -181,7 +181,7 @@ export function EmptyLibraryState({
         fontSize: 13, color: "var(--text-muted)",
         textAlign: "center", lineHeight: 1.7, maxWidth: 320, marginBottom: 28,
       }}>
-        Add your music to get started. Resonance supports MP3, FLAC, WAV, OGG, and more.
+        Add your music to get started. Sonarix supports MP3, FLAC, WAV, OGG, and more.
       </p>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>

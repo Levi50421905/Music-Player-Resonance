@@ -3,15 +3,15 @@ export type Translations = ReturnType<typeof useLang>["t"];
 export type Lang = "id" | "en";
 
 export function getLang(): Lang {
-  try { return (localStorage.getItem("resonance-lang") as Lang) ?? "id"; }
+  try { return (localStorage.getItem("sonarix-lang") as Lang) ?? "id"; }
   catch { return "id"; }
 }
 
 export function setLang(lang: Lang) {
   try {
-    localStorage.setItem("resonance-lang", lang);
+    localStorage.setItem("sonarix-lang", lang);
     document.documentElement.lang = lang;
-    window.dispatchEvent(new CustomEvent("resonance-lang-change", { detail: lang }));
+    window.dispatchEvent(new CustomEvent("sonarix-lang-change", { detail: lang }));
   } catch {}
 }
 
@@ -20,8 +20,8 @@ export function useLang() {
 
   useEffect(() => {
     const handler = (e: Event) => setLangState((e as CustomEvent<Lang>).detail);
-    window.addEventListener("resonance-lang-change", handler);
-    return () => window.removeEventListener("resonance-lang-change", handler);
+    window.addEventListener("sonarix-lang-change", handler);
+    return () => window.removeEventListener("sonarix-lang-change", handler);
   }, []);
 
   return { lang, t: T[lang], setLang };
@@ -184,8 +184,8 @@ export const T = {
     testNotifDesc: "Kirim notifikasi percobaan untuk memastikan izin sudah diberikan",
     sendTest: "🔔 Kirim Tes Notifikasi",
     notifHelp: "Jika notifikasi tidak muncul:",
-    notifWindows: "Windows: Settings → System → Notifications → Resonance → On",
-    notifMac: "macOS: System Preferences → Notifications → Resonance → Allow",
+    notifWindows: "Windows: Settings → System → Notifications → Sonarix → On",
+    notifMac: "macOS: System Preferences → Notifications → Sonarix → Allow",
     notifLinux: "Linux: Pastikan daemon notifikasi berjalan (dunst, notify-osd, dll)",
     // About
     builtWith: "Dibuat dengan Tauri v2 + React",
@@ -232,7 +232,7 @@ summary: "Ringkasan",
 playSessions: "Sesi putar",
 uniqueTracks: "Lagu unik",
 libraryEmpty: "Pustaka kosong",
-libraryEmptyDesc: "Scan folder musik untuk memulai. Resonance mendukung MP3, FLAC, WAV, OGG, dan lainnya.",
+libraryEmptyDesc: "Scan folder musik untuk memulai. Sonarix mendukung MP3, FLAC, WAV, OGG, dan lainnya.",
 scanMusicFolder: "📁  Scan Folder Musik",
 playTracksToSee: "Putar beberapa lagu untuk melihatnya di sini",
 rateTracksToSee: "Beri rating ★ pada lagu untuk melihatnya di sini",
@@ -407,8 +407,8 @@ unknown: "Tidak diketahui",
     testNotifDesc: "Send a test notification to verify permissions are granted",
     sendTest: "🔔 Send Test Notification",
     notifHelp: "If notifications don't appear:",
-    notifWindows: "Windows: Settings → System → Notifications → Resonance → On",
-    notifMac: "macOS: System Preferences → Notifications → Resonance → Allow",
+    notifWindows: "Windows: Settings → System → Notifications → Sonarix → On",
+    notifMac: "macOS: System Preferences → Notifications → Sonarix → Allow",
     notifLinux: "Linux: Make sure a notification daemon is running (dunst, notify-osd, etc.)",
     // About
     builtWith: "Built with Tauri v2 + React",
@@ -455,7 +455,7 @@ summary: "Summary",
 playSessions: "Play sessions",
 uniqueTracks: "Unique tracks",
 libraryEmpty: "Your library is empty",
-libraryEmptyDesc: "Scan a folder containing your music to get started. Resonance supports MP3, FLAC, WAV, OGG, and more.",
+libraryEmptyDesc: "Scan a folder containing your music to get started. Sonarix supports MP3, FLAC, WAV, OGG, and more.",
 scanMusicFolder: "📁  Scan Music Folder",
 playTracksToSee: "Play some tracks to see them here",
 rateTracksToSee: "Rate tracks with ★ to see them here",

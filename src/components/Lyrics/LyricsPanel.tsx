@@ -88,7 +88,7 @@ async function fetchFromLrcLib(title: string, artist: string): Promise<ParsedLrc
     if (!url) return null;
 
     const res = await fetch(url, {
-      headers: { "Lrclib-Client": "Resonance/0.1.0" },
+      headers: { "Lrclib-Client": "Sonarix/1.0.0" },
       signal: AbortSignal.timeout(8000),
     });
 

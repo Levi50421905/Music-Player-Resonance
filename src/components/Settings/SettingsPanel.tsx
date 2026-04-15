@@ -851,7 +851,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
         granted = perm === "granted";
       }
       if (granted) {
-        await sendNotification({ title: "Resonance", body: "Test notification ✓" });
+        await sendNotification({ title: "Sonarix", body: "Test notification ✓" });
         showFeedback("Test notification sent!", "success");
       } else {
         showFeedback("Notification permission denied", "error");
@@ -860,7 +860,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
       if ("Notification" in window) {
         if (Notification.permission === "default") await Notification.requestPermission();
         if (Notification.permission === "granted") {
-          new Notification("Resonance", { body: "Test notification ✓", silent: true });
+          new Notification("Sonarix", { body: "Test notification ✓", silent: true });
           showFeedback("Test notification sent!", "success");
         } else {
           showFeedback("Notifications not available in this environment", "info");
@@ -1512,8 +1512,8 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     {lang === "id" ? "Jika notifikasi tidak muncul:" : "If notifications don't appear:"}
                   </p>
                   <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.7 }}>
-                    <strong>Windows:</strong> Settings → System → Notifications → Resonance → On<br/>
-                    <strong>macOS:</strong> System Preferences → Notifications → Resonance → Allow<br/>
+                    <strong>Windows:</strong> Settings → System → Notifications → Sonarix → On<br/>
+                    <strong>macOS:</strong> System Preferences → Notifications → Sonarix → Allow<br/>
                     <strong>Linux:</strong> {lang === "id" ? "Pastikan daemon notifikasi berjalan (dunst, notify-osd, dll)" : "Make sure a notification daemon is running (dunst, notify-osd)"}
                   </p>
                 </SettingCard>
@@ -1566,8 +1566,8 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26,
                 }}>♪</div>
                 <div style={{ textAlign: "center" }}>
-                  <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Resonance</h2>
-                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 0.1.0</p>
+                  <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Sonarix</h2>
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.0.0</p>
                   <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
                     {lang === "id" ? "Dibuat dengan Tauri v2 + React" : "Built with Tauri v2 + React"}
                   </p>

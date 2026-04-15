@@ -65,7 +65,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:resonance.db", vec![])
+                .add_migrations("sqlite:sonarix.db", vec![])
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![

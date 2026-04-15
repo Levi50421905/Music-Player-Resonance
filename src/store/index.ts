@@ -518,7 +518,7 @@ export const usePlayerStore = create<PlayerState>()(
       clearQueue: () => get().clearManualQueue(),
     }),
     {
-      name: "resonance-player-v10",
+      name: "sonarix-player-v1",
       partialize: (s) => ({
         volume: s.volume,
         shuffleMode: s.shuffleMode,
@@ -754,6 +754,6 @@ export const useSettingsStore = create<SettingsState>()(
         excludeFolders: s.excludeFolders.filter((f) => f !== path),
       })),
     }),
-    { name: "resonance-settings" }
+    { name: "sonarix-settings" }
   )
 );

@@ -173,7 +173,7 @@ export default function SmartPlaylistView({ onPlay }: Props) {
             </div>
             <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Select a mood on the left</p>
             <p style={{ fontSize: 12, color: "var(--text-faint)" }}>
-              Resonance will curate tracks automatically
+              Sonarix will curate tracks automatically
             </p>
           </div>
         ) : (

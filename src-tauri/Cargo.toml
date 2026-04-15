@@ -1,14 +1,14 @@
 [package]
-name = "resonance"
-version = "0.1.0"
+name = "sonarix"
+version = "1.0.0"
 edition = "2021"
 
 [lib]
-name = "resonance_lib"
+name = "sonarix_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "resonance"
+name = "sonarix"
 path = "src/main.rs"
 
 [build-dependencies]
