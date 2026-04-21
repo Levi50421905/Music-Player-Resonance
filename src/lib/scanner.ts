@@ -357,22 +357,23 @@ export async function addFiles(
   const db    = await getDb();
   const results: Song[] = [];
 
-  // Emit "indexing" phase saat mulai
+  // Emit phase awal
   onProgress?.({
-  total: files.length, current: 0,
-  currentFile: "", currentFolder: "",
-  done: false,
-});
+    total: files.length, current: 0,
+    currentFile: "", currentFolder: "",
+    done: false,
+  });
 
   for (let i = 0; i < files.length; i++) {
     const filePath = files[i];
     const fileName = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
+    const folderName = filePath.replace(/\\/g, "/").split("/").slice(-2, -1)[0] ?? "";
 
     onProgress?.({
-  total: files.length, current: 0,
-  currentFile: "", currentFolder: "",
-  done: false,
-});
+      total: files.length, current: i + 1,
+      currentFile: fileName, currentFolder: folderName,
+      done: false,
+    });
 
     try {
       const song = await parseFile(normalizePath(filePath));
@@ -384,10 +385,10 @@ export async function addFiles(
   }
 
   onProgress?.({
-  total: files.length, current: 0,
-  currentFile: "", currentFolder: "",
-  done: false,
-});
+    total: files.length, current: files.length,
+    currentFile: "", currentFolder: "",
+    done: true,
+  });
 
   return results;
 }

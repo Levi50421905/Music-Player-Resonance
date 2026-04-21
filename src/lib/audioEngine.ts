@@ -16,7 +16,7 @@
  *            bukan hanya saat state === "suspended".
  *   [FIX #6] Fallback: jika Web Audio API gagal init (ctx = null), volume
  *            di-set langsung ke el.volume untuk KEDUA element (A dan B).
- *   [FIX #A] el.crossOrigin TETAP DIHAPUS (dari v10).
+ *   [FIX #A] el.crossOrigin = "anonymous" diperlukan agar Web Audio API (createMediaElementSource) bisa decode audio via Tauri asset protocol.
  *   [FIX #B] Deduplikasi error per play token (dari v10).
  *   [FIX #D] _isDecoding flag untuk false positive FLAC (dari v10).
  */
@@ -476,15 +476,18 @@ export class AudioEngine {
   }
 
   // ── Audio Focus ───────────────────────────────────────────────────────────
+  private _visibilityHandler: (() => void) | null = null;
+
   private _setupAudioFocus() {
-    document.addEventListener("visibilitychange", () => {
+    this._visibilityHandler = () => {
       if (!this._audioFocusEnabled) return;
       if (!document.hidden) {
         if (this.ctx?.state === "suspended") {
           this.ctx.resume().catch(() => {});
         }
       }
-    });
+    };
+    document.addEventListener("visibilitychange", this._visibilityHandler);
   }
 
   // ── Active slot helpers ───────────────────────────────────────────────────
@@ -842,7 +845,6 @@ if (token !== this._playToken) return;
     otherGain.gain.setValueAtTime(0, now);
   }
 
-  console.log("[AudioEngine] Active:", this._active, "Volume:", this._volume);
 }
 
   getSkipScore(filePath: string): number { return this._skipCounts.get(filePath) ?? 0; }
@@ -932,12 +934,10 @@ if (token !== this._playToken) return;
     return { eligible: true };
   }
 
-   setVolume(v: number): void {
+  setVolume(v: number): void {
   // support 0–100 dan 0–1
   const normalized = v > 1 ? v / 100 : v;
   this._volume = Math.max(0, Math.min(1, normalized));
-
-  console.log("[AudioEngine] setVolume:", this._volume);
 
   if (!this.ctx) {
     if (this.elA) this.elA.volume = this._volume;
@@ -1031,6 +1031,10 @@ if (token !== this._playToken) return;
     this.preloadPath = null;
     this._preloadFired = false;
     this._isDecoding = false;
+    if (this._visibilityHandler) {
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
   }
 }
 

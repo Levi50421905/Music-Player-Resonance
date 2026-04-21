@@ -1596,7 +1596,7 @@ function AboutSection({ lang }: { lang: Lang }) {
       }}>♪</div>
       <div style={{ textAlign: "center" }}>
         <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Sonarix</h2>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.0.0</p>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.0.3</p>
         <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {lang === "id" ? "Dibuat dengan Tauri v2 + React" : "Built with Tauri v2 + React"}
         </p>

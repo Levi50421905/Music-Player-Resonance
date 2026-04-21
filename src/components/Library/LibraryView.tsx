@@ -44,10 +44,42 @@ function clampMenuPos(x: number, y: number, w = 220, h = 380) {
   return { x: Math.min(x, window.innerWidth - w - 8), y: Math.min(y, window.innerHeight - h - 8) };
 }
 
+/**
+ * Badge NEW muncul hanya jika:
+ * 1. Lagu ditambahkan dalam 7 hari terakhir
+ * 2. Belum pernah diputar sama sekali (play_count === 0)
+ *
+ * Badge LANGSUNG hilang saat lagu pertama kali diputar karena play_count
+ * di-update real-time via setSongs() di App.tsx → maybeRecordPlay().
+ */
 function isNewTrack(dateAdded?: string, playCount?: number): boolean {
   if (!dateAdded) return false;
-  if (playCount && playCount > 0) return false;
-  return new Date(dateAdded).getTime() > Date.now() - 3 * 86400000;
+  // Hilang begitu diputar pertama kali
+  if ((playCount ?? 0) > 0) return false;
+  // Hanya muncul jika ditambahkan dalam 7 hari terakhir
+  return new Date(dateAdded).getTime() > Date.now() - 7 * 86400000;
+}
+
+// ── Persist library view preferences ke localStorage ─────────────────────────
+const LS_KEY = "sonarix-library-prefs";
+
+interface LibraryPrefs {
+  sortKey:      string;
+  sortDir:      "asc" | "desc";
+  filterFormat: string;
+  groupBy:      string;
+  visibleCols:  Record<string, boolean>;
+}
+
+function loadLibraryPrefs(): Partial<LibraryPrefs> {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveLibraryPrefs(prefs: Partial<LibraryPrefs>) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch { /* quota */ }
 }
 
 const DEFAULT_COLS: Record<string, boolean> = {
@@ -61,17 +93,36 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const { currentSong, isPlaying } = usePlayerStore() as any;
 
   const [search, setSearch]             = useState("");
-  const [sortKey, setSortKey]           = useState<SortKey>("title");
-  const [sortDir, setSortDir]           = useState<"asc"|"desc">("asc");
-  const [filterFormat, setFilterFormat] = useState("all");
-  const [groupBy, setGroupBy]           = useState<GroupBy>("none");
-  const [selected, setSelected]         = useState<Set<number>>(new Set());
-  const [selectionMode, setSelectionMode] = useState(false); // [NEW] explicit selection mode
-  const [hoveredRowId, setHoveredRowId] = useState<number | null>(null); // [NEW] track hovered row
-  const [contextMenu, setContextMenu]   = useState<{ x: number; y: number; songs: Song[] } | null>(null);
+
+  // State yang dipersist ke localStorage agar tidak reset saat app dibuka lagi
+  const [_prefs] = useState(() => loadLibraryPrefs());
+  const [sortKey, setSortKeyRaw]        = useState<SortKey>((_prefs.sortKey as SortKey) ?? "title");
+  const [sortDir, setSortDirRaw]        = useState<"asc"|"desc">(_prefs.sortDir ?? "asc");
+  const [filterFormat, setFilterFormatRaw] = useState(_prefs.filterFormat ?? "all");
+  const [groupBy, setGroupByRaw]        = useState<GroupBy>((_prefs.groupBy as GroupBy) ?? "none");
+  const [visibleCols, setVisibleColsRaw] = useState<Record<string, boolean>>(
+    _prefs.visibleCols ? { ...DEFAULT_COLS, ..._prefs.visibleCols } : DEFAULT_COLS
+  );
+
+  // Wrapper setter yang juga simpan ke localStorage
+  const setSortKey = (k: SortKey) => { setSortKeyRaw(k); saveLibraryPrefs({ sortKey: k, sortDir, filterFormat, groupBy, visibleCols }); };
+  const setSortDir = (d: "asc"|"desc") => { setSortDirRaw(d); saveLibraryPrefs({ sortKey, sortDir: d, filterFormat, groupBy, visibleCols }); };
+  const setFilterFormat = (f: string) => { setFilterFormatRaw(f); saveLibraryPrefs({ sortKey, sortDir, filterFormat: f, groupBy, visibleCols }); };
+  const setGroupBy = (g: GroupBy) => { setGroupByRaw(g); saveLibraryPrefs({ sortKey, sortDir, filterFormat, groupBy: g, visibleCols }); };
+  const setVisibleCols = (cols: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
+    setVisibleColsRaw(prev => {
+      const next = typeof cols === "function" ? cols(prev) : cols;
+      saveLibraryPrefs({ sortKey, sortDir, filterFormat, groupBy, visibleCols: next });
+      return next;
+    });
+  };
+
+  const [selected, setSelected]           = useState<Set<number>>(new Set());
+  const [selectionMode, setSelectionMode]   = useState(false);
+  const [hoveredRowId, setHoveredRowId]   = useState<number | null>(null);
+  const [contextMenu, setContextMenu]     = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Song[] | null>(null);
-  const [visibleCols, setVisibleCols]   = useState<Record<string, boolean>>(DEFAULT_COLS);
-  const [showViewMenu, setShowViewMenu] = useState(false);
+  const [showViewMenu, setShowViewMenu]   = useState(false);
   const [showFormatDrop, setShowFormatDrop] = useState(false);
   const [focusedRowIdx, setFocusedRowIdx]   = useState(-1);
 
@@ -179,8 +230,15 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   useEffect(() => { if (focusedRowIdx >= 0) focusedRowRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [focusedRowIdx]);
 
   const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
+    if (sortKey === key) {
+      const newDir = sortDir === "asc" ? "desc" : "asc";
+      setSortDirRaw(newDir);
+      saveLibraryPrefs({ sortKey, sortDir: newDir, filterFormat, groupBy, visibleCols });
+    } else {
+      setSortKeyRaw(key);
+      setSortDirRaw("asc");
+      saveLibraryPrefs({ sortKey: key, sortDir: "asc", filterFormat, groupBy, visibleCols });
+    }
   };
 
   const toggleSelect = useCallback((id: number, idx: number, e: React.MouseEvent) => {
