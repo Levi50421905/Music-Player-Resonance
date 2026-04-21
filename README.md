@@ -15,7 +15,7 @@
 
 ## ✨ Overview
 
-**Sonarix** (formerly known as **Sonarix**) is a fast, clean desktop music player that respects your local music library. Built with Tauri 2 and React, it combines the performance of a native app with the flexibility of a modern web frontend — all in a tiny installer footprint.
+**Sonarix** is a fast, clean desktop music player that respects your local music library. Built with Tauri 2 and React, it combines the performance of a native app with the flexibility of a modern web frontend — all in a tiny installer footprint.
 
 ---
 
@@ -23,8 +23,8 @@
 
 | Installer | Type | Recommended |
 |-----------|------|-------------|
-| [Sonarix_1.0.0_x64-setup.exe](https://github.com/Levi50421905/Music-Player-Sonarix/releases/download/v1.0.0/Sonarix_1.0.0_x64-setup.exe) | NSIS Installer | ✅ Most users |
-| [Sonarix_1.0.0_x64_en-US.msi](https://github.com/Levi50421905/Music-Player-Sonarix/releases/download/v1.0.0/Sonarix_1.0.0_x64_en-US.msi) | MSI Package | For enterprise / IT deployment |
+| [Sonarix_1.0.3_x64-setup.exe](https://github.com/Levi50421905/Music-Player-Sonarix/releases/download/v1.0.3/Sonarix_1.0.3_x64-setup.exe) | NSIS Installer | ✅ Most users |
+| [Sonarix_1.0.3_x64_en-US.msi](https://github.com/Levi50421905/Music-Player-Sonarix/releases/download/v1.0.3/Sonarix_1.0.3_x64_en-US.msi) | MSI Package | For enterprise / IT deployment |
 
 > **Windows only** — macOS and Linux builds are planned for a future release.
 
@@ -38,6 +38,7 @@
 - **Smart Audio Cache** — decoded audio is cached for fast repeat playback, with automatic eviction to manage disk usage
 - **Auto Folder Watch** — monitors your music folders in the background and automatically picks up new files without needing a manual rescan
 - **Synchronized Lyrics** — fetches LRC-format synced lyrics automatically via [lrclib.net](https://lrclib.net)
+- **Persistent Library Preferences** — sort order, grouping, filters, and visible columns are saved and restored between sessions
 - **SQLite Library** — your library metadata is stored in a local SQLite database — fast, reliable, no cloud required
 - **Mini Player** — a compact always-on-top mini player window for when you want music controls without the full UI
 - **File Manager Integration** — open any track's folder directly in Windows Explorer
@@ -61,12 +62,12 @@
 ## 📦 Installation
 
 ### Option 1 — NSIS Installer (Recommended)
-1. Download `Sonarix-setup.exe`
+1. Download `Sonarix_1.0.3_x64-setup.exe`
 2. Run the installer and follow the setup wizard
 3. Launch **Sonarix** from the Start Menu or Desktop shortcut
 
 ### Option 2 — MSI Package
-1. Download `Sonarix_1.0.0_x64_en-US.msi`
+1. Download `Sonarix_1.0.3_x64_en-US.msi`
 2. Run the `.msi` file
 3. Follow the Windows Installer prompts
 
@@ -96,11 +97,35 @@ No telemetry. No accounts. No subscriptions.
 
 ---
 
-## 🐛 Known Issues (v1.0.0)
+## 🐛 Known Issues
 
 - MP3/AAC/M4A decoding is handled by the system's native WebView2 codec; quality depends on Windows codec availability
 - Mini player window position is not persisted between sessions
 - Very large FLAC files (>1 hour) may take a few seconds to cache on first play
+
+---
+
+## 📋 Changelog
+
+### v1.0.3 — Bug Fix & Polish Release
+
+- **Library preferences now persist between sessions** — sort order, filter format, grouping, and visible columns are saved to `localStorage` and restored on next launch
+- **Fixed "Add Files" progress bar not moving** — progress now updates per file and correctly shows the current filename and folder being processed
+- **Removed leftover debug `console.log` calls** — eliminates performance impact on volume slider (which fires hundreds of times per second) and on track start
+- **Fixed memory leak in audio engine** — the `visibilitychange` event listener is now properly removed when the audio engine is destroyed
+- **Fixed incorrect import path in `VirtualLibraryView.tsx`** — prevented a potential build error caused by a wrong relative path to `performance.ts`
+- **Minor code quality fixes** — corrected indentation in `setVolume()` and updated a misleading comment about `crossOrigin` behavior
+
+### v1.0.0 — Initial Release
+
+- Full local music library with SQLite backend
+- Multi-format playback (MP3, FLAC, WAV, OGG, AAC, M4A, ALAC, WMA, OPUS, APE)
+- FLAC native decode with ReplayGain support
+- Smart audio cache with automatic eviction
+- Auto folder watch for background library updates
+- Synchronized lyrics via lrclib.net
+- Mini player (always-on-top)
+- File Manager integration
 
 ---
 
