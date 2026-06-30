@@ -1617,7 +1617,12 @@ function AboutSection({ lang }: { lang: Lang }) {
       }}>♪</div>
       <div style={{ textAlign: "center" }}>
         <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Sonarix</h2>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.0.3</p>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.1.1</p>
+        <p style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6, lineHeight: 1.6, maxWidth: 360 }}>
+          {lang === "id"
+            ? "Antrian side panel · Smart mood shuffle · Badge kualitas audio · Deteksi M4A · Perbaikan sleep timer & persist antrian"
+            : "Queue side panel · Smart mood shuffle · Audio quality badges · M4A detection · Sleep timer & queue persistence fixes"}
+        </p>
         <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {lang === "id" ? "Dibuat dengan Tauri v2 + React" : "Built with Tauri v2 + React"}
         </p>

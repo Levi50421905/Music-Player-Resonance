@@ -677,3 +677,65 @@ button:disabled { opacity: 0.35; cursor: not-allowed; }
   clip: rect(0,0,0,0);
   border: 0;
 }
+
+/* ── Queue side panel ─────────────────────────────────────────────────────── */
+.queue-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 900;
+}
+
+.queue-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 72px;
+  width: min(360px, 92vw);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-medium);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  animation: queue-slide-in 0.2s ease;
+}
+
+@keyframes queue-slide-in {
+  from { transform: translateX(100%); opacity: 0.8; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.queue-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.queue-panel-close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.queue-panel-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 12px 14px;
+  min-height: 0;
+}
+
+.icon-btn.active {
+  border-color: var(--accent-border);
+  color: var(--accent-light);
+  background: var(--accent-dim);
+}

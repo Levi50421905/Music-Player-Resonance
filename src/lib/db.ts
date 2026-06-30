@@ -154,6 +154,8 @@ async function migrate(db: Database) {
   const migrations = [
     "ALTER TABLE songs ADD COLUMN file_size INTEGER",
     "ALTER TABLE songs ADD COLUMN loved INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE songs ADD COLUMN sample_rate INTEGER",
+    "ALTER TABLE songs ADD COLUMN bits_per_sample INTEGER",
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column exists */ }
@@ -179,6 +181,8 @@ export interface Song {
   stars?: number;
   play_count?: number;
   has_cover?: boolean;
+  sample_rate?: number | null;
+  bits_per_sample?: number | null;
 }
 
 export interface PlayRecord {
@@ -189,6 +193,7 @@ export interface PlayRecord {
 const SONG_LIST_SELECT = `
   SELECT s.id, s.path, s.title, s.artist, s.album, s.genre, s.year,
          s.duration, s.bitrate, s.format, s.bpm, s.file_size, s.loved, s.date_added,
+         s.sample_rate, s.bits_per_sample,
          (s.cover_art IS NOT NULL AND s.cover_art != '') AS has_cover,
          r.stars,
          COALESCE(pc.play_count, 0) AS play_count
@@ -215,16 +220,18 @@ export async function upsertSong(db: Database, song: Omit<Song, "id" | "date_add
   }
 
   await db.execute(
-    `INSERT INTO songs (path, title, artist, album, genre, year, duration, bitrate, format, cover_art, bpm, file_size)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    `INSERT INTO songs (path, title, artist, album, genre, year, duration, bitrate, format, cover_art, bpm, file_size, sample_rate, bits_per_sample)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT(path) DO UPDATE SET
        title=excluded.title, artist=excluded.artist, album=excluded.album,
        genre=excluded.genre, year=excluded.year, duration=excluded.duration,
        bitrate=excluded.bitrate, format=excluded.format,
-       cover_art=excluded.cover_art, bpm=excluded.bpm, file_size=excluded.file_size`,
+       cover_art=excluded.cover_art, bpm=excluded.bpm, file_size=excluded.file_size,
+       sample_rate=excluded.sample_rate, bits_per_sample=excluded.bits_per_sample`,
     [song.path, song.title, song.artist, song.album, song.genre,
      song.year, song.duration, song.bitrate, song.format, coverRef,
-     song.bpm, song.file_size ?? null]
+     song.bpm, song.file_size ?? null,
+     (song as any).sample_rate ?? null, (song as any).bits_per_sample ?? null]
   );
 }
 

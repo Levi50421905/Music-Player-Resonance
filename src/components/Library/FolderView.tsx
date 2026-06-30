@@ -18,6 +18,7 @@ import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 
 interface Props {
   onPlay: (songs: Song[], startIndex?: number, folderName?: string) => void;
+  resetKey?: number;
 }
 
 function getFolderPath(song: Song): string {
@@ -32,10 +33,12 @@ function getFolderName(path: string): string {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-export default function FolderView({ onPlay }: Props) {
+export default function FolderView({ onPlay, resetKey = 0 }: Props) {
   const { songs } = useLibraryStore();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch]     = useState("");
+
+  useEffect(() => { setSelected(null); }, [resetKey]);
 
   const folders = useMemo(() => {
     const map = new Map<string, Song[]>();
@@ -154,6 +157,7 @@ function FolderDetail({ folder, onBack, onPlay }: {
   onBack: () => void;
   onPlay: (songs: Song[], startIndex?: number, folderName?: string) => void;
 }) {
+  const [selectMode, setSelectMode]   = useState(false);
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
@@ -163,6 +167,14 @@ function FolderDetail({ folder, onBack, onPlay }: {
   useEffect(() => {
     getDb().then(db => getPlaylists(db)).then(setPlaylists).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onBack();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onBack]);
 
   const selectedSongs = useMemo(() => folder.songs.filter(s => selected.has(s.id)), [folder.songs, selected]);
 
@@ -283,6 +295,19 @@ function FolderDetail({ folder, onBack, onPlay }: {
               border: "1px solid var(--accent-border, rgba(124,58,237,0.4))",
               color: "var(--accent-light, #a78bfa)", cursor: "pointer", fontFamily: "inherit",
             }}>Acak</button>
+            <button
+              onClick={() => {
+                if (selectMode) { setSelectMode(false); setSelected(new Set()); }
+                else setSelectMode(true);
+              }}
+              style={{
+                padding: "7px 13px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
+                background: selectMode ? "var(--accent-dim)" : "transparent",
+                border: `1px solid ${selectMode ? "var(--accent-border)" : "var(--border-medium)"}`,
+                color: selectMode ? "var(--accent-light)" : "var(--text-secondary)",
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >{selectMode ? "Batal pilih" : "Pilih"}</button>
           </div>
         </div>
       </div>
@@ -298,7 +323,7 @@ function FolderDetail({ folder, onBack, onPlay }: {
             onAddToQueue={() => handleAddToQueue(selectedSongs)}
             onAddToPlaylist={pid => handleAddToPlaylist(pid, selectedSongs)}
             onDelete={() => setConfirmDel(selectedSongs)}
-            onClear={() => setSelected(new Set())}
+            onClear={() => { setSelected(new Set()); setSelectMode(false); }}
           />
         </div>
       )}
@@ -309,7 +334,7 @@ function FolderDetail({ folder, onBack, onPlay }: {
           <div
             key={song.id}
             onClick={e => {
-              if (selected.size > 0) { toggleSelect(song.id, i, e); return; }
+              if (selectMode || selected.size > 0) { toggleSelect(song.id, i, e); return; }
               onPlay(folder.songs, i, folder.name);
             }}
             onContextMenu={e => {
@@ -331,7 +356,11 @@ function FolderDetail({ folder, onBack, onPlay }: {
               checked={isSelected}
               onChange={e => toggleSelect(song.id, i, e as any)}
               onClick={e => e.stopPropagation()}
-              style={{ accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0 }}
+              style={{
+                accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0,
+                visibility: selectMode || selected.size > 0 ? "visible" : "hidden",
+                width: selectMode || selected.size > 0 ? 16 : 0,
+              }}
             />
             <span style={{ width: 22, textAlign: "center", fontSize: 11, color: "var(--text-faint)", fontFamily: "monospace", flexShrink: 0 }}>
               {i + 1}

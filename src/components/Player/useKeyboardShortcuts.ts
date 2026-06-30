@@ -22,6 +22,7 @@ interface Handlers {
   onFocusSearch: () => void;
   onRating?: (songId: number, stars: number) => void;
   onToggleCheatsheet?: () => void;
+  onOpenSleepTimer?: () => void;
 }
 
 export function useKeyboardShortcuts(handlers: Handlers) {
@@ -95,13 +96,6 @@ export function useKeyboardShortcuts(handlers: Handlers) {
           break;
 
         // ── Shuffle & Repeat ──────────────────────────────────────────────
-        case "KeyS":
-          if (!ctrl) {
-            e.preventDefault();
-            handlers.onToggleShuffle();
-          }
-          break;
-
         case "KeyR":
           if (!ctrl) {
             e.preventDefault();
@@ -116,6 +110,18 @@ export function useKeyboardShortcuts(handlers: Handlers) {
 
         case "KeyL":
           if (ctrl) { e.preventDefault(); handlers.onToggleLyrics(); }
+          break;
+
+        case "KeyS":
+          if (ctrl && e.shiftKey) {
+            e.preventDefault();
+            handlers.onOpenSleepTimer?.();
+            break;
+          }
+          if (!ctrl) {
+            e.preventDefault();
+            handlers.onToggleShuffle();
+          }
           break;
 
         case "Comma":

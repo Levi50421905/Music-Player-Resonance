@@ -17,6 +17,7 @@ import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 
 interface Props {
   onPlay: (songs: Song[], startIndex?: number) => void;
+  resetKey?: number;
 }
 
 const CHUNK_SIZE = 40;
@@ -89,10 +90,12 @@ function useLazyRender<T>(items: T[], chunkSize = CHUNK_SIZE) {
 }
 
 // ── Album View ─────────────────────────────────────────────────────────────────
-export function AlbumView({ onPlay }: Props) {
+export function AlbumView({ onPlay, resetKey = 0 }: Props) {
   const { songs, setSongs } = useLibraryStore() as any;
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch]     = useState("");
+
+  useEffect(() => { setSelected(null); }, [resetKey]);
 
   const albums = useMemo(() => {
     const map = new Map<string, {
@@ -233,6 +236,7 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
 
   const [deleteStep, setDeleteStep]   = useState<0|1|2>(0);
   const [isDeleting, setIsDeleting]   = useState(false);
+  const [selectMode, setSelectMode]   = useState(false);
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
@@ -242,6 +246,14 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
   useEffect(() => {
     getDb().then(db => getPlaylists(db)).then(setPlaylists).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onBack();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onBack]);
 
   const sortedSongs = useMemo(() => {
     return [...album.songs].sort((a: Song, b: Song) => {
@@ -362,6 +374,19 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
               border: "1px solid var(--accent-border, rgba(124,58,237,0.4))",
               color: "var(--accent-light, #a78bfa)", cursor: "pointer", fontFamily: "inherit",
             }}>Acak</button>
+            <button
+              onClick={() => {
+                if (selectMode) { setSelectMode(false); setSelected(new Set()); }
+                else setSelectMode(true);
+              }}
+              style={{
+                padding: "7px 13px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
+                background: selectMode ? "var(--accent-dim)" : "transparent",
+                border: `1px solid ${selectMode ? "var(--accent-border)" : "var(--border-medium)"}`,
+                color: selectMode ? "var(--accent-light)" : "var(--text-secondary)",
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >{selectMode ? "Batal pilih" : "Pilih"}</button>
             <button onClick={() => setDeleteStep(1)} style={{
               padding: "7px 13px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
               background: "var(--danger-dim, rgba(239,68,68,0.1))", border: "1px solid rgba(239,68,68,0.3)",
@@ -382,7 +407,7 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
             onAddToQueue={() => handleAddToQueue(selectedSongs)}
             onAddToPlaylist={pid => handleAddToPlaylist(pid, selectedSongs)}
             onDelete={() => setConfirmDel(selectedSongs)}
-            onClear={() => setSelected(new Set())}
+            onClear={() => { setSelected(new Set()); setSelectMode(false); }}
           />
         </div>
       )}
@@ -394,7 +419,7 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
           <div
             key={song.id}
             onClick={e => {
-              if (selected.size > 0) { toggleSelect(song.id, i, e); return; }
+              if (selectMode || selected.size > 0) { toggleSelect(song.id, i, e); return; }
               onPlay(sortedSongs, i);
             }}
             onContextMenu={e => {
@@ -416,7 +441,11 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
               checked={isSelected}
               onChange={e => toggleSelect(song.id, i, e as any)}
               onClick={e => e.stopPropagation()}
-              style={{ accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0 }}
+              style={{
+                accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0,
+                visibility: selectMode || selected.size > 0 ? "visible" : "hidden",
+                width: selectMode || selected.size > 0 ? 16 : 0,
+              }}
             />
             <span style={{ width: 22, textAlign: "center", fontSize: 11, color: "var(--text-faint)", fontFamily: "monospace", flexShrink: 0 }}>
               {(song as any).track ?? i + 1}
@@ -487,10 +516,12 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
 }
 
 // ── Artist View ────────────────────────────────────────────────────────────────
-export function ArtistView({ onPlay }: Props) {
+export function ArtistView({ onPlay, resetKey = 0 }: Props) {
   const { songs } = useLibraryStore();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch]     = useState("");
+
+  useEffect(() => { setSelected(null); }, [resetKey]);
 
   const artists = useMemo(() => {
     const map = new Map<string, { name: string; songs: Song[]; representativeId: number; coverArt: string | null }>();
@@ -550,6 +581,7 @@ export function ArtistView({ onPlay }: Props) {
 }
 
 function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => void; onPlay: Props["onPlay"] }) {
+  const [selectMode, setSelectMode]       = useState(false);
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
@@ -559,6 +591,14 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
   useEffect(() => {
     getDb().then(db => getPlaylists(db)).then(setPlaylists).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onBack();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onBack]);
 
   const albumMap = new Map<string, Song[]>();
   for (const s of artist.songs) {
@@ -660,11 +700,26 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
           <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4 }}>
             {artist.songs.length} lagu · {albumMap.size} album
           </p>
-          <button onClick={() => onPlay(artist.songs, 0)} style={{
-            marginTop: 10, padding: "6px 14px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
-            background: "linear-gradient(135deg, var(--accent, #7C3AED), #EC4899)",
-            border: "none", color: "white", cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
-          }}>Putar semua</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={() => onPlay(artist.songs, 0)} style={{
+              padding: "6px 14px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
+              background: "linear-gradient(135deg, var(--accent, #7C3AED), #EC4899)",
+              border: "none", color: "white", cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+            }}>Putar semua</button>
+            <button
+              onClick={() => {
+                if (selectMode) { setSelectMode(false); setSelected(new Set()); }
+                else setSelectMode(true);
+              }}
+              style={{
+                padding: "6px 14px", borderRadius: "var(--radius-md, 8px)", fontSize: 12,
+                background: selectMode ? "var(--accent-dim)" : "transparent",
+                border: `1px solid ${selectMode ? "var(--accent-border)" : "var(--border-medium)"}`,
+                color: selectMode ? "var(--accent-light)" : "var(--text-secondary)",
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >{selectMode ? "Batal pilih" : "Pilih"}</button>
+          </div>
         </div>
       </div>
 
@@ -678,7 +733,7 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
             onAddToQueue={() => handleAddToQueue(selectedSongs)}
             onAddToPlaylist={pid => handleAddToPlaylist(pid, selectedSongs)}
             onDelete={() => setConfirmDel(selectedSongs)}
-            onClear={() => setSelected(new Set())}
+            onClear={() => { setSelected(new Set()); setSelectMode(false); }}
           />
         </div>
       )}
@@ -701,7 +756,7 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
                 <div
                   key={song.id}
                   onClick={e => {
-                    if (selected.size > 0) {
+                    if (selectMode || selected.size > 0) {
                       if (e.shiftKey && lastSelIdx.current >= 0) {
                         const start = Math.min(lastSelIdx.current, globalIdx);
                         const end = Math.max(lastSelIdx.current, globalIdx);
@@ -738,7 +793,11 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
                       lastSelIdx.current = globalIdx;
                     }}
                     onClick={e => e.stopPropagation()}
-                    style={{ accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0 }}
+                    style={{
+                      accentColor: "var(--accent)", cursor: "pointer", flexShrink: 0,
+                      visibility: selectMode || selected.size > 0 ? "visible" : "hidden",
+                      width: selectMode || selected.size > 0 ? 16 : 0,
+                    }}
                   />
                   <span style={{ width: 18, fontSize: 11, color: "var(--text-faint)", fontFamily: "monospace", flexShrink: 0 }}>
                     {(song as any).track ?? i + 1}

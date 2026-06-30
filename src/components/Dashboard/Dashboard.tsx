@@ -14,10 +14,11 @@ import CoverArt from "../CoverArt";
 import { useLang } from "../../lib/i18n";
 import SongContextMenu, { ConfirmDeleteModal } from "../SongContextMenu";
 import { deleteSongs } from "../../lib/db";
+import { detectMoodContext, getListeningStreak, buildSessionContinuation, getResumeQueueInfo } from "../../lib/moodEngine";
 import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 
 interface Props {
-  onPlay:        (songs: Song[], index?: number) => void;
+  onPlay:        (songs: Song[], index?: number, contextName?: string) => void;
   onRating:      (songId: number, stars: number) => void;
   onScanFolder?: () => void;
 }
@@ -94,6 +95,13 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
       .slice(0, 8),
     [songs]
   );
+
+  const listeningStreak = useMemo(() => getListeningStreak(history), [history]);
+  const sessionContinue = useMemo(
+    () => buildSessionContinuation(history, songs),
+    [history, songs],
+  );
+  const resumeInfo = useMemo(() => getResumeQueueInfo(), [currentSong, history]);
 
   const dayLabels = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 
@@ -262,7 +270,7 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
 
       {/* Context menu */}
       {contextMenu && (
@@ -287,25 +295,135 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
         />
       )}
 
+      {/* ── Welcome + mood hint ── */}
+      {(() => {
+        const mood = detectMoodContext();
+        const h = new Date().getHours();
+        const greet = h < 12 ? "Selamat pagi" : h < 17 ? "Selamat siang" : h < 21 ? "Selamat sore" : "Selamat malam";
+        return (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+            padding: "16px 18px", borderRadius: "var(--radius-lg)",
+            background: "linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.08))",
+            border: "1px solid var(--border)",
+          }}>
+            <div>
+              <h2 style={{ fontWeight: 700, fontSize: 17, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>
+                {greet}
+              </h2>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                {mood.description} · {stats.tracks.toLocaleString()} lagu di library
+              </p>
+            </div>
+            <div style={{
+              flexShrink: 0, padding: "6px 12px", borderRadius: 20,
+              background: `${mood.color}22`, border: `1px solid ${mood.color}55`,
+              fontSize: 11, fontWeight: 600, color: mood.color,
+            }}>
+              {mood.label}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Smart actions: streak, resume, session continue ── */}
+      {(listeningStreak > 0 || resumeInfo || sessionContinue) && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {listeningStreak > 0 && (
+            <div style={{
+              flex: "1 1 140px", padding: "12px 14px", borderRadius: "var(--radius-lg)",
+              background: "var(--bg-overlay)", border: "1px solid var(--border)",
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
+                background: "linear-gradient(135deg, #F59E0B, #EF4444)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 16, fontWeight: 800, color: "white",
+              }}>{listeningStreak}</div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 12, color: "var(--text-primary)" }}>
+                  Streak mendengarkan
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                  {listeningStreak} hari berturut-turut
+                </div>
+              </div>
+            </div>
+          )}
+
+          {resumeInfo && currentSong && (
+            <div style={{
+              flex: "2 1 200px", padding: "12px 14px", borderRadius: "var(--radius-lg)",
+              background: "rgba(124,58,237,0.08)", border: "1px solid var(--accent-border)",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            }}>
+              <div style={{ overflow: "hidden" }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: "var(--accent-light)" }}>
+                  Lanjutkan antrian
+                </div>
+                <div style={{
+                  fontSize: 11, color: "var(--text-muted)", marginTop: 2,
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {resumeInfo.songTitle}
+                  {resumeInfo.queueRemaining > 0 ? ` · ${resumeInfo.queueRemaining} lagu lagi` : ""}
+                  {resumeInfo.contextName ? ` · ${resumeInfo.contextName}` : ""}
+                </div>
+              </div>
+              <button
+                onClick={() => onPlay([currentSong], 0)}
+                style={{
+                  flexShrink: 0, padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                  background: "var(--accent)", border: "none", color: "white", cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >Putar</button>
+            </div>
+          )}
+
+          {sessionContinue && (
+            <div style={{
+              flex: "2 1 200px", padding: "12px 14px", borderRadius: "var(--radius-lg)",
+              background: "var(--bg-overlay)", border: "1px solid var(--border)",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 12, color: "var(--text-primary)" }}>
+                  {sessionContinue.label}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                  {sessionContinue.songs.length} lagu · jam serupa kemarin
+                </div>
+              </div>
+              <button
+                onClick={() => onPlay(sessionContinue.songs, 0, "Sesi Kemarin")}
+                style={{
+                  flexShrink: 0, padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                  background: "transparent", border: "1px solid var(--accent-border)",
+                  color: "var(--accent-light)", cursor: "pointer", fontFamily: "inherit",
+                }}
+              >Mix</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Stat cards ── */}
-      <div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-          {[
-            { value: stats.tracks.toLocaleString(), label: "Lagu",     sub: "di library" },
-            { value: `${stats.hours}j`,             label: "Durasi",   sub: "total waktu putar" },
-            { value: `${stats.losslessPct}%`,        label: "Lossless", sub: "dari library" },
-          ].map(stat => (
-            <StatCard key={stat.label} {...stat} />
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {[
-            { value: stats.avgRating,                   label: "Rating rata-rata", sub: "dari lagu yang dirating" },
-            { value: stats.totalPlays.toLocaleString(), label: "Total diputar",    sub: "sepanjang waktu" },
-          ].map(stat => (
-            <StatCard key={stat.label} {...stat} />
-          ))}
-        </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+        gap: 10,
+      }}>
+        {[
+          { value: stats.tracks.toLocaleString(), label: "Lagu",           sub: "di library" },
+          { value: `${stats.hours}j`,             label: "Durasi",         sub: "total waktu" },
+          { value: `${stats.losslessPct}%`,        label: "Lossless",       sub: "dari library" },
+          { value: stats.avgRating,                label: "Rating rata-rata", sub: "lagu dirating" },
+          { value: stats.totalPlays.toLocaleString(), label: "Total diputar", sub: "sepanjang waktu" },
+        ].map(stat => (
+          <StatCard key={stat.label} {...stat} />
+        ))}
       </div>
 
       {/* ── Recently Played ── */}

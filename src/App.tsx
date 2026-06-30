@@ -37,7 +37,7 @@ import { useLang } from "./lib/i18n";                         // ← [NEW] untuk
 import Onboarding from "./components/Onboarding/Onboarding";
 import Sidebar from "./components/Sidebar";
 import LibraryView from "./components/Library/LibraryView";
-import QueueView from "./components/Playlist/QueueView";
+import QueueSidePanel from "./components/Player/QueueSidePanel";
 import EqualizerView from "./components/Equalizer/EqualizerView";
 import PlaylistsView from "./components/Playlist/PlaylistsView";
 import SmartPlaylistView from "./components/Smart/SmartPlaylistView";
@@ -192,9 +192,8 @@ useEffect(() => {
   ];
 
   const SECONDARY_TABS = [
-    { id: "queue"     as ActiveTab, label: lang === "id" ? "Antrian"  : "Queue",     icon: Icons.queue },
-    { id: "equalizer" as ActiveTab, label: "EQ",                                       icon: Icons.equalizer },
-    { id: "playlists" as ActiveTab, label: lang === "id" ? "Playlist" : "Playlists",  icon: Icons.playlists },
+    { id: "equalizer" as ActiveTab, label: "EQ", icon: Icons.equalizer },
+    { id: "playlists" as ActiveTab, label: lang === "id" ? "Playlist" : "Playlists", icon: Icons.playlists },
   ];
 
   // ── State (tidak berubah dari v9) ─────────────────────────────────────────
@@ -206,6 +205,9 @@ useEffect(() => {
   const [preloadState, setPreloadState]     = useState<PreloadState>(null);
   const [playbackSpeed, setPlaybackSpeed]   = useState(1);
   const [isDragOver, setIsDragOver]         = useState(false);
+  const [showQueuePanel, setShowQueuePanel] = useState(false);
+  const [detailResetKey, setDetailResetKey] = useState({ albums: 0, artists: 0, folders: 0 });
+  const queueRestoredRef = useRef(false);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem("Sonarix-sidebar-collapsed") === "true"; } catch { return false; }
@@ -230,6 +232,7 @@ useEffect(() => {
     setDuration, nextTrack, prevTrack, addToHistory, setPlayContext,
     cycleShuffleMode, cycleRepeatMode,
     playNextTrack,
+    unifiedQueue,
   } = usePlayerStore();
 
  const {
@@ -328,6 +331,11 @@ useEffect(() => {
         }
         usePlayerStore.getState()._rebuildUnified();
         await restorePlaybackSession(setCurrentTime, setDuration, setProgress);
+        const qLen = usePlayerStore.getState().unifiedQueue?.length ?? 0;
+        if (!queueRestoredRef.current && qLen > 0) {
+          queueRestoredRef.current = true;
+          toastInfo(lang === "id" ? `Antrian dipulihkan (${qLen} lagu)` : `Queue restored (${qLen} tracks)`);
+        }
       } finally {
         setLoading(false);
       }
@@ -416,13 +424,20 @@ useEffect(() => {
   }, []);
 
   const switchTab = useCallback((tab: ActiveTab) => {
-    if (tab === activeTab) return;
+    if (tab === activeTab) {
+      if (tab === "albums") setDetailResetKey(k => ({ ...k, albums: k.albums + 1 }));
+      if (tab === "artists") setDetailResetKey(k => ({ ...k, artists: k.artists + 1 }));
+      if (tab === "folders") setDetailResetKey(k => ({ ...k, folders: k.folders + 1 }));
+      return;
+    }
     setTabTransition(true);
     setTimeout(() => {
       setActiveTab(tab);
       setTabTransition(false);
     }, 80);
   }, [activeTab]);
+
+  const queueCount = Array.isArray(unifiedQueue) ? unifiedQueue.length : 0;
 
   const playSong = useCallback(async (song: Song) => {
     errorSkipCountRef.current = 0;
@@ -673,6 +688,7 @@ useEffect(() => {
       switchTab("library");
       setTimeout(() => searchInputRef.current?.focus(), 50);
     },
+    onOpenSleepTimer: () => startSleep(15),
   });
 
   // ── Loading screen ──────────────────────────────────────────────────────────
@@ -775,6 +791,27 @@ useEffect(() => {
 
               <div className="nav-divider" />
 
+              <button
+                className={`icon-btn ${showQueuePanel ? "active" : ""}`}
+                onClick={() => setShowQueuePanel(v => !v)}
+                title={lang === "id" ? "Antrian" : "Queue"}
+                style={{ position: "relative" }}
+              >
+                {Icons.queue}
+                {queueCount > 0 && (
+                  <span style={{
+                    position: "absolute", top: -4, right: -4,
+                    minWidth: 16, height: 16, padding: "0 4px",
+                    borderRadius: 8, fontSize: 9, fontWeight: 700,
+                    background: "var(--accent)", color: "white",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontFamily: "monospace",
+                  }}>
+                    {queueCount > 99 ? "99+" : queueCount}
+                  </span>
+                )}
+              </button>
+
               <SleepTimerButton
                 timer={sleepTimer}
                 onStart={startSleep}
@@ -817,7 +854,15 @@ useEffect(() => {
                   onPlay={(song, contextList) => {
                     if (contextList && contextList.length > 0) {
                       const idx = contextList.findIndex(s => s.id === song.id);
-                      playList(contextList, idx >= 0 ? idx : 0, "Library");
+                      const MAX_CTX = 300;
+                      if (contextList.length > MAX_CTX && idx >= 0) {
+                        const start = Math.max(0, idx - 50);
+                        const end = Math.min(contextList.length, start + MAX_CTX);
+                        const slice = contextList.slice(start, end);
+                        playList(slice, idx - start, "Library");
+                      } else {
+                        playList(contextList, idx >= 0 ? idx : 0, "Library");
+                      }
                     } else {
                       playList([song], 0);
                     }
@@ -832,11 +877,10 @@ useEffect(() => {
               )
             )}
 
-            {activeTab === "albums"  && <AlbumView onPlay={(list, idx) => playList(list, idx ?? 0, "Album")} />}
-            {activeTab === "artists" && <ArtistView onPlay={(list, idx) => playList(list, idx ?? 0, "Artist")} />}
-            {activeTab === "folders" && <FolderView onPlay={(list, idx, folderName) => playList(list, idx ?? 0, folderName ?? "Folder")} />}
+            {activeTab === "albums"  && <AlbumView onPlay={(list, idx) => playList(list, idx ?? 0, "Album")} resetKey={detailResetKey.albums} />}
+            {activeTab === "artists" && <ArtistView onPlay={(list, idx) => playList(list, idx ?? 0, "Artist")} resetKey={detailResetKey.artists} />}
+            {activeTab === "folders" && <FolderView onPlay={(list, idx, folderName) => playList(list, idx ?? 0, folderName ?? "Folder")} resetKey={detailResetKey.folders} />}
             {activeTab === "smart"   && <SmartPlaylistView onPlay={(list, idx) => playList(list, idx ?? 0, "Smart")} />}
-            {activeTab === "queue"   && <QueueView onPlay={song => playSong(song)} onPlayFromQueue={(list, idx, name) => playList(list, idx, name)} />}
             {activeTab === "equalizer" && <EqualizerView />}
             {activeTab === "playlists" && (
               <PlaylistsView
@@ -845,6 +889,14 @@ useEffect(() => {
               />
             )}
           </div>
+
+          <QueueSidePanel
+            open={showQueuePanel}
+            onClose={() => setShowQueuePanel(false)}
+            queueCount={queueCount}
+            onPlay={song => playSong(song)}
+            onPlayFromQueue={(list, idx, name) => playList(list, idx, name)}
+          />
         </div>
       </div>
 

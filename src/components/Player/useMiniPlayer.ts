@@ -51,8 +51,22 @@ export function useMiniPlayer() {
     }
 
     try {
-      // Lazy import so WebviewWindow is never required at module load time
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+
+      // Reuse existing window if label already registered (e.g. after app restart)
+      const existing = await WebviewWindow.getByLabel("mini");
+      if (existing) {
+        miniWinRef.current = existing;
+        try { await existing.setFocus(); } catch { /* ignore */ }
+        emit("mini:state", {
+          title:    currentSong?.title    ?? "No track",
+          artist:   currentSong?.artist   ?? "",
+          songId:   currentSong?.id       ?? 0,
+          coverArt: currentSong?.cover_art ?? null,
+          isPlaying, progress, duration, volume,
+        }).catch(() => {});
+        return;
+      }
 
       const win = new WebviewWindow("mini", {
         url:         "/#/mini",

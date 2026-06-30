@@ -18,6 +18,7 @@ import WaveformSeekbar    from "../Waveform/WaveformSeekbar";
 import StarRating         from "../StarRating";
 import type { ShuffleMode, RepeatMode } from "../../store";
 import { SleepTimerBanner, type SleepTimerState } from "./SleepTimer";
+import AudioQualityBadge from "./AudioQualityBadge";
 
 interface Props {
   onPlayPause:    () => void;
@@ -353,7 +354,7 @@ export default function PlayerBarV2({
     setVolume, cycleShuffleMode, cycleRepeatMode,
   } = usePlayerStore();
 
-  const [useWaveform, setUseWaveform] = useState(true);
+  const [seekMode, setSeekMode] = useState<"bars" | "mirror" | "line" | "progress">("bars");
   const [hoverTime, setHoverTime]     = useState<string | null>(null);
   const [hoverPct, setHoverPct]       = useState(0);
   const [showVolTooltip, setShowVolTooltip] = useState(false);
@@ -398,13 +399,14 @@ export default function PlayerBarV2({
 
       {/* ── Seekbar area ── */}
       <div style={{ height: 56, position: "relative" }}>
-        {useWaveform && currentSong ? (
+        {seekMode !== "progress" && currentSong ? (
           <WaveformSeekbar
             filePath={currentSong.path}
             progress={progress}
             onSeek={handleWaveSeek}
             height={56}
             barCount={200}
+            variant={seekMode}
           />
         ) : (
           <div
@@ -491,8 +493,10 @@ export default function PlayerBarV2({
                 <div style={{
                   fontSize: 11, color: "var(--text-muted)",
                   marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  display: "flex", alignItems: "center", gap: 6,
                 }}>
-                  {currentSong.artist}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{currentSong.artist}</span>
+                  <AudioQualityBadge song={currentSong} compact />
                 </div>
                 <div onClick={e => e.stopPropagation()} style={{ marginTop: 3 }}>
                   <StarRating stars={currentSong.stars ?? 0} onChange={s => onRating(currentSong.id, s)} size={10} />
@@ -558,25 +562,35 @@ export default function PlayerBarV2({
             )}
             {onSpeedChange && <SpeedControl speed={playbackSpeed} onChange={onSpeedChange} />}
 
-            {/* Waveform toggle — pakai SVG, bukan unicode 〰 ▬ */}
+            {/* Waveform style cycle: bars → mirror → line → progress */}
             <button
-              onClick={() => setUseWaveform(v => !v)}
-              title={useWaveform ? "Switch to progress bar" : "Switch to waveform"}
+              onClick={() => {
+                setSeekMode(m => {
+                  const order: ("bars" | "mirror" | "line" | "progress")[] = ["bars", "mirror", "line", "progress"];
+                  return order[(order.indexOf(m) + 1) % order.length];
+                });
+              }}
+              title={
+                seekMode === "bars" ? "Waveform: bars"
+                : seekMode === "mirror" ? "Waveform: mirror"
+                : seekMode === "line" ? "Waveform: line"
+                : "Progress bar"
+              }
               style={{
-                background: useWaveform ? "var(--accent-dim)" : "transparent",
-                border: `1px solid ${useWaveform ? "var(--accent-border)" : "var(--border)"}`,
+                background: seekMode !== "progress" ? "var(--accent-dim)" : "transparent",
+                border: `1px solid ${seekMode !== "progress" ? "var(--accent-border)" : "var(--border)"}`,
                 borderRadius: "var(--radius-sm)",
                 cursor: "pointer",
-                color: useWaveform ? "var(--accent-light)" : "var(--text-faint)",
+                color: seekMode !== "progress" ? "var(--accent-light)" : "var(--text-faint)",
                 padding: "3px 6px",
                 display: "flex",
                 alignItems: "center",
                 transition: "all 0.15s",
               }}
               onMouseEnter={e => { e.currentTarget.style.color = "var(--text-primary)"; }}
-              onMouseLeave={e => { e.currentTarget.style.color = useWaveform ? "var(--accent-light)" : "var(--text-faint)"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = seekMode !== "progress" ? "var(--accent-light)" : "var(--text-faint)"; }}
             >
-              {useWaveform ? <IconWaveform /> : <IconProgressBar />}
+              {seekMode === "progress" ? <IconProgressBar /> : <IconWaveform />}
             </button>
           </div>
         </div>

@@ -13,12 +13,15 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { audioEngine } from "../../lib/audioEngine";
 
+export type WaveformVariant = "bars" | "mirror" | "line";
+
 interface Props {
   filePath: string | null;
   progress: number;
   onSeek: (pct: number) => void;
   height?: number;
   barCount?: number;
+  variant?: WaveformVariant;
 }
 
 const waveformCache = new Map<string, Float32Array>();
@@ -42,6 +45,7 @@ export default function WaveformSeekbar({
   onSeek,
   height = 56,
   barCount = 150,
+  variant = "bars",
 }: Props) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const [waveform, setWaveform]     = useState<Float32Array | null>(null);
@@ -153,18 +157,9 @@ export default function WaveformSeekbar({
     const barW       = Math.max(1.5, (W / totalBars) - 1.2);
     const gap        = W / totalBars - barW;
     const minBarH    = 2;
-    const HOVER_ZONE = barW * 6; // highlight zone around hover
+    const HOVER_ZONE = barW * 6;
 
-    for (let i = 0; i < totalBars; i++) {
-      const x     = i * (barW + gap);
-      const barH  = Math.max(minBarH, waveform[i] * (H - 8));
-      const y     = (H - barH) / 2;
-      const cx    = x + barW / 2;
-
-      const isPlayed  = x + barW < playedX;
-      const isHead    = Math.abs(cx - playedX) < barW * 2.5;
-      const isHovered = hoverX !== null && Math.abs(cx - hoverX) < HOVER_ZONE;
-
+    const drawBar = (x: number, barH: number, y: number, isPlayed: boolean, isHead: boolean, isHovered: boolean) => {
       if (isPlayed) {
         const grad = ctx.createLinearGradient(0, y, 0, y + barH);
         grad.addColorStop(0, "#a78bfa");
@@ -175,8 +170,7 @@ export default function WaveformSeekbar({
         ctx.fillStyle = "rgba(210,195,255,0.8)";
         ctx.globalAlpha = 1;
       } else if (isHovered) {
-        // Hover tint — gradient from center
-        const dist  = hoverX !== null ? Math.abs(cx - hoverX) : HOVER_ZONE;
+        const dist = hoverX !== null ? Math.abs(x + barW / 2 - hoverX) : HOVER_ZONE;
         const alpha = 0.35 * (1 - dist / HOVER_ZONE);
         ctx.fillStyle = `rgba(167,139,250,${0.18 + alpha})`;
         ctx.globalAlpha = 1;
@@ -184,11 +178,52 @@ export default function WaveformSeekbar({
         ctx.fillStyle = "rgba(255,255,255,0.09)";
         ctx.globalAlpha = 1;
       }
-
       ctx.beginPath();
-      const r = Math.min(barW / 2, 2);
-      ctx.roundRect(x, y, barW, barH, r);
+      ctx.roundRect(x, y, barW, barH, Math.min(barW / 2, 2));
       ctx.fill();
+    };
+
+    if (variant === "line") {
+      const midY = H / 2;
+      const buildPath = (limitX: number) => {
+        ctx.beginPath();
+        for (let i = 0; i < totalBars; i++) {
+          const x = i * (barW + gap) + barW / 2;
+          if (x > limitX) break;
+          const y = midY - waveform[i] * (H / 2 - 6);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        for (let i = totalBars - 1; i >= 0; i--) {
+          const x = i * (barW + gap) + barW / 2;
+          if (x > limitX) continue;
+          ctx.lineTo(x, midY + waveform[i] * (H / 2 - 6));
+        }
+        ctx.closePath();
+      };
+      buildPath(W);
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      ctx.fill();
+      buildPath(playedX);
+      ctx.fillStyle = "rgba(167,139,250,0.5)";
+      ctx.fill();
+    } else {
+      for (let i = 0; i < totalBars; i++) {
+        const x = i * (barW + gap);
+        const amp = waveform[i];
+        const cx = x + barW / 2;
+        const isPlayed = x + barW < playedX;
+        const isHead = Math.abs(cx - playedX) < barW * 2.5;
+        const isHovered = hoverX !== null && Math.abs(cx - hoverX) < HOVER_ZONE;
+
+        if (variant === "mirror") {
+          const halfH = Math.max(minBarH, amp * (H / 2 - 4));
+          drawBar(x, halfH, H / 2 - halfH, isPlayed, isHead, isHovered);
+          drawBar(x, halfH, H / 2, isPlayed, isHead, isHovered);
+        } else {
+          const barH = Math.max(minBarH, amp * (H - 8));
+          drawBar(x, barH, (H - barH) / 2, isPlayed, isHead, isHovered);
+        }
+      }
     }
 
     ctx.globalAlpha = 1;
@@ -215,7 +250,7 @@ export default function WaveformSeekbar({
     }
 
     ctx.restore();
-  }, [waveform, progress, barCount, height, hoverPct]);
+  }, [waveform, progress, barCount, height, hoverPct, variant]);
 
   // Resize observer
   useEffect(() => {

@@ -11,7 +11,7 @@ import { getDb, upsertSong, type Song } from "./db";
 import { META_READ_BYTES }         from "./coverArt";
 
 const AUDIO_EXTENSIONS = new Set([
-  "mp3", "flac", "wav", "ogg", "aac", "m4a", "alac", "wma", "opus", "ape"
+  "mp3", "flac", "wav", "ogg", "aac", "m4a", "mp4", "m4b", "alac", "wma", "opus", "ape"
 ]);
 
 const ALLOWED_IMAGE_MIMES = new Set([
@@ -366,12 +366,30 @@ async function listAudioFiles(dirPath: string, excludeFolders: string[]): Promis
 }
 
 async function readAudioHeader(filePath: string): Promise<Uint8Array> {
+  const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
+  const isMp4Family = ["m4a", "mp4", "m4b", "alac", "aac"].includes(ext);
+
   try {
     const st = await stat(filePath);
-    if (st.size != null && st.size <= META_READ_BYTES) {
+    const fileSize = st.size ?? 0;
+
+    // MP4/M4A: moov atom is often at end — must read full file (head+tail concat is invalid MP4)
+    const FULL_READ_LIMIT = 64 * 1024 * 1024;
+    if (isMp4Family && fileSize > 0 && fileSize <= FULL_READ_LIMIT) {
+      return await readFile(filePath);
+    }
+
+    if (isMp4Family && fileSize > FULL_READ_LIMIT) {
+      // Very large: read last 16MB where moov atom usually lives
+      const tail = await invoke<number[]>("read_file_suffix", { path: filePath, len: 16 * 1024 * 1024 });
+      return new Uint8Array(tail);
+    }
+
+    if (fileSize > 0 && fileSize <= META_READ_BYTES) {
       return await readFile(filePath);
     }
   } catch { /* use prefix read */ }
+
   const bytes = await invoke<number[]>("read_file_prefix", { path: filePath, len: META_READ_BYTES });
   return new Uint8Array(bytes);
 }
@@ -382,11 +400,37 @@ async function parseFile(
 ): Promise<Omit<Song, "id" | "date_added">> {
   const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
   const normalizedPath = normalizePath(filePath);
-  const bytes = await readAudioHeader(normalizedPath);
-  const blob  = new Blob([bytes]);
+  const fileName = filePath.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "") ?? "Unknown";
+  const displayFormat = ext === "mp4" || ext === "m4b" ? "M4A" : ext.toUpperCase();
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await readAudioHeader(normalizedPath);
+  } catch (err) {
+    throw new Error(`Cannot read file: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const resolvedFileSize = fileSize ?? bytes.byteLength;
 
-  const meta = await musicMetadata.parseBlob(blob, { skipCovers: false } as any);
+  let meta: Awaited<ReturnType<typeof musicMetadata.parseBlob>>;
+  try {
+    const blob = new Blob([bytes]);
+    meta = await musicMetadata.parseBlob(blob, { skipCovers: false } as any);
+  } catch (firstErr) {
+    // Retry: full read for MP4 family if first attempt used partial data
+    const isMp4Family = ["m4a", "mp4", "m4b", "alac", "aac"].includes(ext);
+    if (isMp4Family && resolvedFileSize <= 64 * 1024 * 1024) {
+      try {
+        const full = await readFile(normalizedPath);
+        meta = await musicMetadata.parseBlob(new Blob([full]), { skipCovers: false } as any);
+      } catch {
+        throw firstErr;
+      }
+    } else {
+      throw firstErr;
+    }
+  }
+
   const { common, format } = meta;
 
   let coverArt: string | null = null;
@@ -394,7 +438,9 @@ async function parseFile(
     coverArt = sanitizeCoverArt(common.picture[0]);
   }
 
-  const fileName = filePath.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "") ?? "Unknown";
+  const codec = (format.codec ?? "").toLowerCase();
+  const isAlac = codec.includes("alac") || codec.includes("apple lossless");
+  const displayFormatResolved = isAlac ? "ALAC" : displayFormat;
 
   return {
     path:       normalizedPath,
@@ -405,14 +451,16 @@ async function parseFile(
     year:       common.year ?? null,
     duration:   format.duration ?? 0,
     bitrate:    format.bitrate ? Math.round(format.bitrate / 1000) : 0,
-    format:     ext.toUpperCase(),
+    format:     displayFormatResolved,
     cover_art:  coverArt,
     bpm:        common.bpm ?? null,
     file_size:  resolvedFileSize,
     loved:      0,
     stars:      undefined,
     play_count: undefined,
-  };
+    sample_rate: format.sampleRate ? Math.round(format.sampleRate) : null,
+    bits_per_sample: format.bitsPerSample ?? null,
+  } as Omit<Song, "id" | "date_added">;
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {

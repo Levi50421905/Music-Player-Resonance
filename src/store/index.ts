@@ -38,6 +38,8 @@ interface QueueSnapshot {
 }
 
 const MAX_UNDO_HISTORY = 20;
+/** Max upcoming tracks materialized in unified queue (avoids lag with large libraries). */
+const MAX_UNIFIED_UPCOMING = 50;
 
 interface PlayerState {
   currentSong: Song | null;
@@ -167,14 +169,19 @@ function buildUnified(
   }
 
   if (shuffleMode !== "off" && shufflePool.length > 0) {
+    let added = 0;
     for (const idx of shufflePool) {
+      if (added >= MAX_UNIFIED_UPCOMING) break;
       if (playContext[idx]) {
         result.push({ song: playContext[idx], fromManual: false, uid: makeUid() });
+        added++;
       }
     }
   } else {
-    for (let i = contextIndex + 1; i < playContext.length; i++) {
+    let added = 0;
+    for (let i = contextIndex + 1; i < playContext.length && added < MAX_UNIFIED_UPCOMING; i++) {
       result.push({ song: playContext[i], fromManual: false, uid: makeUid() });
+      added++;
     }
   }
 
@@ -307,8 +314,12 @@ export const usePlayerStore = create<PlayerState>()(
           isQueueShuffled: false,
           _queueHistory: [],
         });
-        // Now rebuild with the updated state
-        get()._rebuildUnified();
+        // Defer rebuild for large lists to avoid UI freeze
+        if (safeList.length > 200) {
+          queueMicrotask(() => get()._rebuildUnified());
+        } else {
+          get()._rebuildUnified();
+        }
       },
 
       // ── Manual queue ────────────────────────────────────────────────────
@@ -447,7 +458,15 @@ export const usePlayerStore = create<PlayerState>()(
           const remainingUnified = unifiedQueue.slice(1);
 
           if (next.fromManual) {
-            const newManual = remainingUnified.filter(x => x.fromManual).map(x => x.song);
+            const { repeatMode, manualQueue } = get();
+            let newManual: Song[];
+            if (repeatMode === "repeat_all") {
+              // Rotate manual queue so repeat-all loops added tracks
+              const rest = manualQueue.filter(s => s.id !== next.song.id);
+              newManual = rest.length > 0 ? [...rest, next.song] : manualQueue;
+            } else {
+              newManual = remainingUnified.filter(x => x.fromManual).map(x => x.song);
+            }
             set({
               currentSong: next.song,
               manualQueue: newManual,
@@ -487,6 +506,20 @@ export const usePlayerStore = create<PlayerState>()(
         }
 
         // No items in unifiedQueue — handle repeat/shuffle fallback
+
+        const { manualQueue } = get();
+
+        // Repeat-all with manual queue only (or after context exhausted)
+        if (repeatMode === "repeat_all" && manualQueue.length > 0) {
+          const nextSong = manualQueue[0];
+          const rest = manualQueue.slice(1);
+          set({
+            currentSong: nextSong,
+            manualQueue: [...rest, nextSong],
+          });
+          get()._rebuildUnified();
+          return { song: nextSong, fromManual: true };
+        }
 
         // Shuffle mode: try to rebuild pool from playContext
         if (shuffleMode !== "off") {

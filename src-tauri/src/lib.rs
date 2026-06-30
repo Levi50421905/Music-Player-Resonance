@@ -46,7 +46,7 @@ struct WatchHandle {
 }
 
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "wav", "ogg", "aac", "m4a", "alac", "wma", "opus", "ape"
+    "mp3", "flac", "wav", "ogg", "aac", "m4a", "mp4", "m4b", "alac", "wma", "opus", "ape"
 ];
 
 fn is_audio_file(path: &Path) -> bool {
@@ -71,6 +71,7 @@ pub fn run() {
             get_app_version,
             get_exe_dir,
             read_file_prefix,
+            read_file_suffix,
             open_file_manager,
             decode_audio_to_cache,
             get_cache_path,
@@ -251,9 +252,24 @@ fn get_exe_dir() -> Result<String, String> {
 #[tauri::command]
 fn read_file_prefix(path: String, len: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let cap = len.min(512 * 1024) as usize;
+    let cap = len.min(8 * 1024 * 1024) as usize;
     let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; cap];
+    let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(n);
+    Ok(buf)
+}
+
+#[tauri::command]
+fn read_file_suffix(path: String, len: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let cap = len.min(16 * 1024 * 1024) as u64;
+    let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let size = file.metadata().map_err(|e| e.to_string())?.len();
+    let read_len = cap.min(size) as usize;
+    let start = size.saturating_sub(read_len as u64);
+    file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; read_len];
     let n = file.read(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(n);
     Ok(buf)
