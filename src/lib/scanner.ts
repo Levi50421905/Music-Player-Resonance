@@ -1,25 +1,14 @@
 /**
- * scanner.ts — v4
- *
- * PERUBAHAN vs v3:
- *   [NEW] Incremental scan — sebelum parse, cek apakah file sudah ada di DB
- *         dengan path yang sama. Jika sudah ada DAN ukuran file tidak berubah,
- *         skip parsing metadata (hanya update path jika perlu). Ini membuat
- *         re-scan 10× lebih cepat untuk library yang sudah ada.
- *   [NEW] Multi-folder scan — scanFolders() menerima array path, bisa scan
- *         beberapa folder sekaligus dalam satu sesi. Progress digabungkan.
- *   [NEW] file_size disimpan ke DB — dipakai untuk deteksi perubahan file
- *         (incremental) dan ditampilkan di LibraryView sebagai kolom baru.
- *   [NEW] Failed files report — scanFolder/scanFolders mengembalikan objek
- *         { songs, failedFiles } alih-alih hanya array Song. failedFiles berisi
- *         { path, error } untuk setiap file yang gagal di-parse.
- *   [SEC] Semua sanitasi cover art dari v3 dipertahankan.
+ * scanner.ts — v5
+ * Incremental scan, partial metadata read, exclude folders, import dropped paths.
  */
 
 import { open }                    from "@tauri-apps/plugin-dialog";
 import { readDir, readFile, stat } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import * as musicMetadata          from "music-metadata";
 import { getDb, upsertSong, type Song } from "./db";
+import { META_READ_BYTES }         from "./coverArt";
 
 const AUDIO_EXTENSIONS = new Set([
   "mp3", "flac", "wav", "ogg", "aac", "m4a", "alac", "wma", "opus", "ape"
@@ -31,28 +20,25 @@ const ALLOWED_IMAGE_MIMES = new Set([
 
 const MAX_COVER_ART_BYTES = 2 * 1024 * 1024;
 
-// ── Tipe hasil scan ───────────────────────────────────────────────────────────
-
 export interface ScanProgress {
   total: number;
   current: number;
   currentFile: string;
   currentFolder: string;
   done: boolean;
-  skipped?: number;    // [NEW] jumlah file yang di-skip (sudah up-to-date)
-  failed?: number;     // [NEW] jumlah file yang gagal di-parse
+  skipped?: number;
+  failed?: number;
 }
 
-/** [NEW] Hasil scan lengkap termasuk laporan file yang gagal */
 export interface ScanResult {
   songs: Song[];
-  /** File yang gagal di-parse beserta pesan errornya */
   failedFiles: { path: string; error: string }[];
-  /** File yang di-skip karena sudah up-to-date (incremental) */
   skippedCount: number;
 }
 
-// ── Security helpers ──────────────────────────────────────────────────────────
+export interface ScanOptions {
+  excludeFolders?: string[];
+}
 
 function sanitizeCoverArt(pic: { format: string; data: Uint8Array }): string | null {
   const mime = (pic.format ?? "").toLowerCase().trim();
@@ -80,40 +66,32 @@ function hasValidImageMagicBytes(data: Uint8Array, mime: string): boolean {
   return false;
 }
 
-// ── Cache path DB yang sudah ada ──────────────────────────────────────────────
-
-/**
- * Ambil semua lagu dari DB sebagai Map<path, file_size>
- * untuk keperluan incremental scan.
- */
 async function buildExistingPathMap(db: Awaited<ReturnType<typeof getDb>>): Promise<Map<string, number | null>> {
   const rows = await db.select<{ path: string; file_size: number | null }[]>(
     "SELECT path, file_size FROM songs"
   );
   const map = new Map<string, number | null>();
   for (const row of rows) {
-    map.set(row.path, row.file_size ?? null);
+    const norm = normalizePath(row.path);
+    map.set(norm, row.file_size ?? null);
+    map.set(norm.replace(/\//g, "\\"), row.file_size ?? null);
   }
   return map;
 }
 
-// ── Single folder scan ────────────────────────────────────────────────────────
-
 export async function scanFolder(
-  onProgress?: (p: ScanProgress) => void
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
 ): Promise<ScanResult> {
   const selected = await open({ directory: true, multiple: false, title: "Select music folder" });
   if (!selected || typeof selected !== "string") return { songs: [], failedFiles: [], skippedCount: 0 };
-  return _scanPaths([selected], onProgress);
+  return _scanPaths([selected], onProgress, options);
 }
 
-/**
- * [NEW] scanFolders — scan beberapa folder sekaligus.
- * Jika paths tidak diberikan, buka dialog multi-pilih.
- */
 export async function scanFolders(
   paths?: string[],
-  onProgress?: (p: ScanProgress) => void
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
 ): Promise<ScanResult> {
   let targetPaths = paths;
 
@@ -125,31 +103,144 @@ export async function scanFolders(
     });
 
     if (!selected) return { songs: [], failedFiles: [], skippedCount: 0 };
-
     targetPaths = Array.isArray(selected) ? selected : [selected];
   }
 
   if (targetPaths.length === 0) return { songs: [], failedFiles: [], skippedCount: 0 };
-  return _scanPaths(targetPaths, onProgress);
+  return _scanPaths(targetPaths, onProgress, options);
 }
 
-/**
- * Core scan — handle satu atau banyak folder.
- * Incremental: skip file yang path & file_size-nya sama dengan DB.
- */
+/** Import file/folder paths from drag-and-drop (no dialog). */
+export async function importPaths(
+  paths: string[],
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
+): Promise<ScanResult> {
+  if (!paths.length) return { songs: [], failedFiles: [], skippedCount: 0 };
+
+  const folderPaths: string[] = [];
+  const filePaths: string[] = [];
+
+  for (const raw of paths) {
+    const p = normalizePath(raw);
+    try {
+      const info = await stat(p);
+      if (info.isDirectory) {
+        folderPaths.push(p);
+      } else if (info.isFile) {
+        const ext = p.split(".").pop()?.toLowerCase() ?? "";
+        if (AUDIO_EXTENSIONS.has(ext)) filePaths.push(p);
+      }
+    } catch {
+      const ext = p.split(".").pop()?.toLowerCase() ?? "";
+      if (AUDIO_EXTENSIONS.has(ext)) filePaths.push(p);
+    }
+  }
+
+  if (folderPaths.length > 0) {
+    const folderResult = await _scanPaths(folderPaths, onProgress, options);
+    if (filePaths.length === 0) return folderResult;
+    const fileResult = await _importFileList(filePaths, onProgress, options);
+    return {
+      songs: [...folderResult.songs, ...fileResult.songs],
+      failedFiles: [...folderResult.failedFiles, ...fileResult.failedFiles],
+      skippedCount: folderResult.skippedCount + fileResult.skippedCount,
+    };
+  }
+
+  return _importFileList(filePaths, onProgress, options);
+}
+
+async function _importFileList(
+  filePaths: string[],
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
+): Promise<ScanResult> {
+  const db = await getDb();
+  const existingPaths = await buildExistingPathMap(db);
+  const exclude = normalizeExcludeFolders(options?.excludeFolders ?? []);
+  const results: Song[] = [];
+  const failedFiles: { path: string; error: string }[] = [];
+  let skippedCount = 0;
+  let forbiddenCount = 0;
+
+  for (let i = 0; i < filePaths.length; i++) {
+    const filePath = normalizePath(filePaths[i]);
+    if (isExcluded(filePath, exclude)) {
+      skippedCount++;
+      continue;
+    }
+
+    onProgress?.({
+      total: filePaths.length,
+      current: i + 1,
+      currentFile: getLastPathPart(filePath),
+      currentFolder: getParentFolderName(filePath),
+      done: false,
+      skipped: skippedCount,
+      failed: failedFiles.length,
+    });
+
+    let currentFileSize: number | null = null;
+    try {
+      const fileStat = await stat(filePath);
+      currentFileSize = fileStat.size ?? null;
+    } catch { /* continue */ }
+
+    const existingSize = existingPaths.get(filePath);
+    if (existingSize !== undefined && currentFileSize !== null && existingSize === currentFileSize) {
+      skippedCount++;
+      continue;
+    }
+
+    try {
+      const song = await parseFile(filePath, currentFileSize);
+      await upsertSong(db, song);
+      results.push(song as Song);
+    } catch (err) {
+      const errMsg = String(err);
+      if (errMsg.includes("forbidden path") || errMsg.includes("not allowed")) {
+        forbiddenCount++;
+      } else {
+        failedFiles.push({
+          path: filePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  if (forbiddenCount > 0) {
+    console.error(`[Scanner] ${forbiddenCount} file(s) forbidden — check fs:scope.`);
+  }
+
+  onProgress?.({
+    total: filePaths.length,
+    current: filePaths.length,
+    currentFile: "",
+    currentFolder: "",
+    done: true,
+    skipped: skippedCount,
+    failed: failedFiles.length,
+  });
+
+  return { songs: results, failedFiles, skippedCount };
+}
+
 async function _scanPaths(
   folderPaths: string[],
-  onProgress?: (p: ScanProgress) => void
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
 ): Promise<ScanResult> {
   const db            = await getDb();
   const existingPaths = await buildExistingPathMap(db);
+  const exclude       = normalizeExcludeFolders(options?.excludeFolders ?? []);
 
-  // Kumpulkan semua file dari semua folder
   const allFiles: string[] = [];
   for (const folderPath of folderPaths) {
     const normalizedRoot = normalizePath(folderPath);
     onProgress?.({ total: 0, current: 0, currentFile: "", currentFolder: getLastPathPart(normalizedRoot), done: false });
-    const files = await listAudioFiles(normalizedRoot);
+    const files = await listAudioFiles(normalizedRoot, exclude);
     allFiles.push(...files);
   }
 
@@ -158,7 +249,7 @@ async function _scanPaths(
     return { songs: [], failedFiles: [], skippedCount: 0 };
   }
 
-  const results: Song[]                              = [];
+  const results: Song[] = [];
   const failedFiles: { path: string; error: string }[] = [];
   let skippedCount = 0;
   let forbiddenCount = 0;
@@ -178,26 +269,17 @@ async function _scanPaths(
       failed: failedFiles.length,
     });
 
-    // ── [NEW] Incremental check ──────────────────────────────────────────────
-    // Ambil ukuran file saat ini dari filesystem
     let currentFileSize: number | null = null;
     try {
       const fileStat = await stat(filePath);
       currentFileSize = fileStat.size ?? null;
-    } catch {
-      // stat gagal — lanjut parse normal
-    }
+    } catch { /* continue */ }
 
     const existingSize = existingPaths.get(filePath);
-    if (
-      existingSize !== undefined &&           // sudah ada di DB
-      currentFileSize !== null &&             // bisa baca ukuran file
-      existingSize === currentFileSize        // ukuran sama → tidak berubah
-    ) {
+    if (existingSize !== undefined && currentFileSize !== null && existingSize === currentFileSize) {
       skippedCount++;
-      continue; // skip parsing, file tidak berubah
+      continue;
     }
-    // ── End incremental check ────────────────────────────────────────────────
 
     try {
       const song = await parseFile(filePath, currentFileSize);
@@ -207,11 +289,8 @@ async function _scanPaths(
       const errMsg = String(err);
       if (errMsg.includes("forbidden path") || errMsg.includes("not allowed")) {
         forbiddenCount++;
-        if (forbiddenCount <= 3) {
-          console.warn(`[Scanner] Forbidden path: ${filePath}`);
-        }
+        if (forbiddenCount <= 3) console.warn(`[Scanner] Forbidden path: ${filePath}`);
       } else {
-        // [NEW] Rekam file yang gagal beserta pesan errornya
         failedFiles.push({
           path: filePath,
           error: err instanceof Error ? err.message : String(err),
@@ -221,7 +300,7 @@ async function _scanPaths(
   }
 
   if (forbiddenCount > 0) {
-    console.error(`[Scanner] ${forbiddenCount} file(s) forbidden — tambahkan drive ke fs:scope di default.json.`);
+    console.error(`[Scanner] ${forbiddenCount} file(s) forbidden — check fs:scope.`);
   }
 
   onProgress?.({
@@ -237,9 +316,17 @@ async function _scanPaths(
   return { songs: results, failedFiles, skippedCount };
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
 function normalizePath(p: string): string { return p.replace(/\\/g, "/"); }
+
+function normalizeExcludeFolders(folders: string[]): string[] {
+  return folders.map(f => normalizePath(f).replace(/\/$/, "").toLowerCase());
+}
+
+function isExcluded(filePath: string, excludeFolders: string[]): boolean {
+  if (excludeFolders.length === 0) return false;
+  const norm = normalizePath(filePath).toLowerCase();
+  return excludeFolders.some(ex => norm.startsWith(ex + "/") || norm === ex);
+}
 
 function getLastPathPart(path: string): string {
   return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
@@ -251,19 +338,22 @@ function getParentFolderName(filePath: string): string {
   return parts[0] ?? "";
 }
 
-async function listAudioFiles(dirPath: string): Promise<string[]> {
+async function listAudioFiles(dirPath: string, excludeFolders: string[]): Promise<string[]> {
   const entries = await readDir(dirPath);
   const files: string[] = [];
 
   async function walk(items: Awaited<ReturnType<typeof readDir>>, basePath: string) {
+    if (isExcluded(basePath, excludeFolders)) return;
+
     for (const entry of items) {
       const fullPath = `${basePath.replace(/\\/g, "/")}/${entry.name}`;
       if (entry.isDirectory) {
         if (entry.name?.startsWith(".")) continue;
+        if (isExcluded(fullPath, excludeFolders)) continue;
         try {
           const subEntries = await readDir(fullPath);
           await walk(subEntries, fullPath);
-        } catch { /* abaikan folder yang tidak bisa dibaca */ }
+        } catch { /* skip unreadable folder */ }
       } else if (entry.isFile && entry.name) {
         const ext = entry.name.split(".").pop()?.toLowerCase() ?? "";
         if (AUDIO_EXTENSIONS.has(ext)) files.push(fullPath);
@@ -275,27 +365,28 @@ async function listAudioFiles(dirPath: string): Promise<string[]> {
   return files;
 }
 
-/**
- * Parse metadata satu file audio.
- * [NEW] Menerima fileSize opsional yang sudah diambil dari stat()
- * agar tidak perlu stat dua kali.
- */
+async function readAudioHeader(filePath: string): Promise<Uint8Array> {
+  try {
+    const st = await stat(filePath);
+    if (st.size != null && st.size <= META_READ_BYTES) {
+      return await readFile(filePath);
+    }
+  } catch { /* use prefix read */ }
+  const bytes = await invoke<number[]>("read_file_prefix", { path: filePath, len: META_READ_BYTES });
+  return new Uint8Array(bytes);
+}
+
 async function parseFile(
   filePath: string,
   fileSize?: number | null
 ): Promise<Omit<Song, "id" | "date_added">> {
   const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
   const normalizedPath = normalizePath(filePath);
-  const bytes = await readFile(normalizedPath);
+  const bytes = await readAudioHeader(normalizedPath);
   const blob  = new Blob([bytes]);
-
-  // Ukuran file dari bytes jika belum ada dari stat
   const resolvedFileSize = fileSize ?? bytes.byteLength;
 
-  const meta = await musicMetadata.parseBlob(blob, {
-  skipCovers: false,
-} as any);
-
+  const meta = await musicMetadata.parseBlob(blob, { skipCovers: false } as any);
   const { common, format } = meta;
 
   let coverArt: string | null = null;
@@ -317,8 +408,8 @@ async function parseFile(
     format:     ext.toUpperCase(),
     cover_art:  coverArt,
     bpm:        common.bpm ?? null,
-    file_size:  resolvedFileSize,   // [NEW]
-    loved:      0,                  // default tidak loved
+    file_size:  resolvedFileSize,
+    loved:      0,
     stars:      undefined,
     play_count: undefined,
   };
@@ -333,18 +424,9 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function getMimeType(ext: string): string {
-  const map: Record<string, string> = {
-    mp3: "audio/mpeg", flac: "audio/flac", wav: "audio/wav",
-    ogg: "audio/ogg", aac: "audio/aac", m4a: "audio/mp4",
-    alac: "audio/mp4", wma: "audio/x-ms-wma", opus: "audio/opus", ape: "audio/ape",
-  };
-  return map[ext] ?? "audio/mpeg";
-}
-
-/** addFiles — tambah file individual (tetap dari v3, update dengan file_size) */
 export async function addFiles(
-  onProgress?: (p: ScanProgress) => void
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
 ): Promise<Song[]> {
   const selected = await open({
     multiple: true,
@@ -353,42 +435,16 @@ export async function addFiles(
   });
 
   if (!selected) return [];
-  const files = Array.isArray(selected) ? selected : [selected];
-  const db    = await getDb();
-  const results: Song[] = [];
+  const files = (Array.isArray(selected) ? selected : [selected]).map(normalizePath);
+  const result = await _importFileList(files, onProgress, options);
+  return result.songs;
+}
 
-  // Emit phase awal
-  onProgress?.({
-    total: files.length, current: 0,
-    currentFile: "", currentFolder: "",
-    done: false,
-  });
-
-  for (let i = 0; i < files.length; i++) {
-    const filePath = files[i];
-    const fileName = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
-    const folderName = filePath.replace(/\\/g, "/").split("/").slice(-2, -1)[0] ?? "";
-
-    onProgress?.({
-      total: files.length, current: i + 1,
-      currentFile: fileName, currentFolder: folderName,
-      done: false,
-    });
-
-    try {
-      const song = await parseFile(normalizePath(filePath));
-      await upsertSong(db, song);
-      results.push(song as Song);
-    } catch (err) {
-      console.warn(`[Scanner] Skip: ${filePath}`, err);
-    }
-  }
-
-  onProgress?.({
-    total: files.length, current: files.length,
-    currentFile: "", currentFolder: "",
-    done: true,
-  });
-
-  return results;
+export async function addFilesFromPaths(
+  paths: string[],
+  onProgress?: (p: ScanProgress) => void,
+  options?: ScanOptions
+): Promise<Song[]> {
+  const result = await importPaths(paths, onProgress, options);
+  return result.songs;
 }

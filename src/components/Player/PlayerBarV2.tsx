@@ -17,6 +17,7 @@ import CoverArt           from "../CoverArt";
 import WaveformSeekbar    from "../Waveform/WaveformSeekbar";
 import StarRating         from "../StarRating";
 import type { ShuffleMode, RepeatMode } from "../../store";
+import { SleepTimerBanner, type SleepTimerState } from "./SleepTimer";
 
 interface Props {
   onPlayPause:    () => void;
@@ -26,6 +27,8 @@ interface Props {
   preloadState?:  PreloadState;
   playbackSpeed?: number;
   onSpeedChange?: (s: number) => void;
+  sleepTimer?:    SleepTimerState;
+  onClearSleepTimer?: () => void;
 }
 
 const fmt = (s: number) => {
@@ -342,10 +345,11 @@ function MarqueeTitle({ text, isPlaying }: { text: string; isPlaying: boolean })
 export default function PlayerBarV2({
   onPlayPause, onNext, onPrev, onRating, preloadState,
   playbackSpeed = 1, onSpeedChange,
+  sleepTimer, onClearSleepTimer,
 }: Props) {
   const {
     currentSong, isPlaying, progress, currentTime, duration,
-    volume, queue, shuffleMode, repeatMode,
+    volume, unifiedQueue, shuffleMode, repeatMode,
     setVolume, cycleShuffleMode, cycleRepeatMode,
   } = usePlayerStore();
 
@@ -375,7 +379,7 @@ export default function PlayerBarV2({
     audioEngine.seekPercent(pct);
   }, []);
 
-  const queueCount = Array.isArray(queue) ? queue.length : 0;
+  const queueCount = Array.isArray(unifiedQueue) ? unifiedQueue.length : 0;
   const ct  = currentTime || audioEngine.currentTime;
   const dur = duration    || audioEngine.duration;
 
@@ -466,7 +470,7 @@ export default function PlayerBarV2({
           {currentSong ? (
             <>
               <div style={{ position: "relative", flexShrink: 0 }}>
-                <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} size={44} />
+                <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} hasCover={currentSong.has_cover} size={44} />
                 {isPlaying && (
                   <>
                     <div style={{
@@ -549,6 +553,9 @@ export default function PlayerBarV2({
               {fmt(dur)}
             </span>
             <PreloadDot state={preloadState ?? null} />
+            {sleepTimer && onClearSleepTimer && (
+              <SleepTimerBanner timer={sleepTimer} onClear={onClearSleepTimer} />
+            )}
             {onSpeedChange && <SpeedControl speed={playbackSpeed} onChange={onSpeedChange} />}
 
             {/* Waveform toggle — pakai SVG, bukan unicode 〰 ▬ */}

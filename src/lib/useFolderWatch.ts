@@ -1,30 +1,18 @@
 /**
  * useFolderWatch.ts — Auto folder watch / rescan hook
- *
- * Cara kerja:
- *   1. Saat komponen mount, panggil `watch_folder` di Rust untuk setiap
- *      watch folder yang tersimpan di settings.
- *   2. Listen ke event "fs:file-added" dari Rust.
- *   3. Saat file baru terdeteksi, parse metadata via scanner.ts dan
- *      tambahkan ke DB + update store — tanpa perlu user action.
- *   4. Debounce 2 detik agar tidak re-scan terlalu cepat saat copy batch.
- *
- * Dipanggil sekali di App.tsx setelah library loaded.
  */
 
 import { useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore, useLibraryStore } from "../store";
-import { getDb, upsertSong, getAllSongs } from "./db";
+import { getDb, getAllSongs } from "./db";
+import { scanFolders } from "./scanner";
 import { toastInfo, toastSuccess } from "../components/Notification/ToastSystem";
-
-// Re-use parser logic dari scanner — import fungsi internal
-// Kita perlu parseFile yang sudah ada di scanner.ts
-// Karena parseFile tidak diekspor, kita duplikat versi ringannya di sini
-// untuk file tunggal. Versi lengkap ada di scanner.ts.
 import * as musicMetadata from "music-metadata";
-import { readFile } from "@tauri-apps/plugin-fs";
+import { readFile, stat } from "@tauri-apps/plugin-fs";
+import { upsertSong } from "./db";
+import { META_READ_BYTES } from "./coverArt";
 
 const AUDIO_EXTENSIONS = new Set([
   "mp3", "flac", "wav", "ogg", "aac", "m4a", "alac", "wma", "opus", "ape"
@@ -45,25 +33,23 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function getMimeType(ext: string): string {
-  const map: Record<string, string> = {
-    mp3: "audio/mpeg", flac: "audio/flac", wav: "audio/wav",
-    ogg: "audio/ogg", aac: "audio/aac", m4a: "audio/mp4",
-    alac: "audio/mp4", wma: "audio/x-ms-wma", opus: "audio/opus", ape: "audio/ape",
-  };
-  return map[ext] ?? "audio/mpeg";
-}
-
 async function parseSingleFile(filePath: string) {
   const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
   const normalizedPath = filePath.replace(/\\/g, "/");
-  const bytes = await readFile(normalizedPath);
-  const blob  = new Blob([bytes]);
+  let bytes: Uint8Array;
+  try {
+    const st = await stat(normalizedPath);
+    if (st.size != null && st.size <= META_READ_BYTES) {
+      bytes = await readFile(normalizedPath);
+    } else {
+      bytes = new Uint8Array(await invoke<number[]>("read_file_prefix", { path: normalizedPath, len: META_READ_BYTES }));
+    }
+  } catch {
+    bytes = await readFile(normalizedPath);
+  }
+  const blob = new Blob([bytes]);
 
-  const meta = await musicMetadata.parseBlob(blob, {
-  skipCovers: false,
-} as any);
-
+  const meta = await musicMetadata.parseBlob(blob, { skipCovers: false } as any);
   const { common, format } = meta;
   const fileName = filePath.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "") ?? "Unknown";
 
@@ -78,34 +64,40 @@ async function parseSingleFile(filePath: string) {
     }
   }
 
+  let fileSize: number | null = null;
+  try {
+    const st = await stat(normalizedPath);
+    fileSize = st.size ?? null;
+  } catch { /* skip */ }
+
   return {
-  path:       normalizedPath,
-  title:      common.title ?? fileName,
-  artist:     common.artist ?? common.albumartist ?? "Unknown Artist",
-  album:      common.album ?? "Unknown Album",
-  genre:      common.genre?.[0] ?? "Unknown",
-  year:       common.year ?? null,
-  duration:   format.duration ?? 0,
-  bitrate:    format.bitrate ? Math.round(format.bitrate / 1000) : 0,
-  format:     ext.toUpperCase(),
-  cover_art:  coverArt,
-  bpm:        common.bpm ?? null,
-  file_size:  null,
-  loved:      0,
-  stars:      undefined,
-  play_count: undefined,
-};
+    path:       normalizedPath,
+    title:      common.title ?? fileName,
+    artist:     common.artist ?? common.albumartist ?? "Unknown Artist",
+    album:      common.album ?? "Unknown Album",
+    genre:      common.genre?.[0] ?? "Unknown",
+    year:       common.year ?? null,
+    duration:   format.duration ?? 0,
+    bitrate:    format.bitrate ? Math.round(format.bitrate / 1000) : 0,
+    format:     ext.toUpperCase(),
+    cover_art:  coverArt,
+    bpm:        common.bpm ?? null,
+    file_size:  fileSize,
+    loved:      0,
+    stars:      undefined,
+    play_count: undefined,
+  };
 }
 
 export function useFolderWatch() {
-  const { watchFolders, autoScanOnStart } = useSettingsStore() as any;
+  const { watchFolders, autoScanOnStart, excludeFolders } = useSettingsStore();
   const { setSongs } = useLibraryStore();
 
   const pendingFiles = useRef<string[]>([]);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessing = useRef(false);
+  const autoScanDone = useRef(false);
 
-  // Proses antrian file baru
   const processQueue = useCallback(async () => {
     if (isProcessing.current || pendingFiles.current.length === 0) return;
     isProcessing.current = true;
@@ -128,38 +120,31 @@ export function useFolderWatch() {
       }
 
       if (added > 0) {
-        // Refresh store
         const updated = await getAllSongs(db);
         setSongs(Array.isArray(updated) ? updated : []);
-        toastSuccess(`📂 ${added} file baru ditambahkan otomatis`);
+        toastSuccess(`${added} file baru ditambahkan otomatis`);
       }
     } finally {
       isProcessing.current = false;
-      // Jika ada file baru yang masuk saat processing, proses lagi
       if (pendingFiles.current.length > 0) {
         debounceTimer.current = setTimeout(processQueue, 2000);
       }
     }
   }, [setSongs]);
 
-  // Handle event file baru dari Rust
   const handleFileAdded = useCallback((filePath: string) => {
     const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
     if (!AUDIO_EXTENSIONS.has(ext)) return;
 
     pendingFiles.current.push(filePath);
-
-    // Debounce 2 detik
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(processQueue, 2000);
   }, [processQueue]);
 
-  // Setup: watch semua folder di settings
   useEffect(() => {
     if (!watchFolders || watchFolders.length === 0) return;
     if (!(window as any).__TAURI_INTERNALS__) return;
 
-    // Start watching semua folder
     const startWatching = async () => {
       for (const folder of watchFolders) {
         try {
@@ -172,7 +157,6 @@ export function useFolderWatch() {
 
     startWatching();
 
-    // Listen ke event dari Rust
     let unlisten: (() => void) | null = null;
     listen<string>("fs:file-added", (event) => {
       handleFileAdded(event.payload);
@@ -180,39 +164,34 @@ export function useFolderWatch() {
       unlisten = fn;
     });
 
-    // Cleanup: unwatch semua folder saat unmount
     return () => {
       unlisten?.();
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
-      // Unwatch semua
       for (const folder of watchFolders) {
         invoke("unwatch_folder", { path: folder }).catch(() => {});
       }
     };
   }, [watchFolders, handleFileAdded]);
 
-  // Auto-scan on startup
+  // Auto-scan watched folders on startup (incremental)
   useEffect(() => {
-    if (!autoScanOnStart) return;
+    if (!autoScanOnStart || autoScanDone.current) return;
     if (!watchFolders || watchFolders.length === 0) return;
     if (!(window as any).__TAURI_INTERNALS__) return;
 
-    // Tunda auto-scan 3 detik setelah app ready agar tidak berebut resource dengan init
     const timer = setTimeout(async () => {
-      toastInfo("Auto scan on startup...");
+      autoScanDone.current = true;
+      toastInfo("Auto scan on startup…");
       try {
+        await scanFolders(watchFolders, undefined, { excludeFolders });
         const db = await getDb();
-        // Kita tidak scan ulang penuh di sini — hanya update count
-        // Scan penuh tetap dilakukan user via tombol 📁
-        // Tapi kita check apakah ada folder baru yang perlu di-watch
-        for (const folder of watchFolders) {
-          try {
-            await invoke("watch_folder", { path: folder });
-          } catch { /* skip */ }
-        }
-      } catch { /* skip */ }
-    }, 3000);
+        const updated = await getAllSongs(db);
+        setSongs(Array.isArray(updated) ? updated : []);
+      } catch (err) {
+        console.warn("[FolderWatch] Auto scan failed:", err);
+      }
+    }, 5000);
 
     return () => clearTimeout(timer);
-  }, [autoScanOnStart, watchFolders]);
+  }, [autoScanOnStart, watchFolders, excludeFolders, setSongs]);
 }

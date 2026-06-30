@@ -1,53 +1,94 @@
 /**
  * db.ts — SQLite Database Layer
- * TAMBAHAN vs sebelumnya:
- *   [NEW] reorderPlaylistSongs — update position setelah drag & drop
- *   [NEW] kolom file_size + loved di tabel songs
- *   [NEW] ALTER TABLE migration untuk DB yang sudah ada
- *   [NEW] toggleLoved, getLovedSongs
  */
 
 import Database from "@tauri-apps/plugin-sql";
-import { appLocalDataDir } from "@tauri-apps/api/path";
-import { mkdir } from "@tauri-apps/plugin-fs";
+import { appLocalDataDir, resourceDir } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
+import { mkdir, copyFile, stat } from "@tauri-apps/plugin-fs";
+import { persistCoverArt, resolveCoverArtUrl } from "./coverArt";
 
 let _db: Database | null = null;
 let _dbPath: string | null = null;
+let _legacyMigrated = false;
 
-/**
- * Resolve absolute path untuk database agar persisten di semua platform.
- * Tauri menyimpan appLocalDataDir di:
- *   Windows : %LOCALAPPDATA%\com.sonarix.app\
- *   macOS   : ~/Library/Application Support/com.sonarix.app/
- *   Linux   : ~/.local/share/com.sonarix.app/
- *
- * Path relatif "sqlite:sonarix.db" TIDAK reliable karena working directory
- * bisa berubah tergantung cara app dijalankan, sehingga data bisa hilang.
- */
 async function resolveDbPath(): Promise<string> {
   if (_dbPath) return _dbPath;
   const dataDir = await appLocalDataDir();
-  // Pastikan direktori ada
   try {
     await mkdir(dataDir, { recursive: true });
-  } catch {
-    // Sudah ada, abaikan
-  }
-  // Normalize separator — Tauri SQL plugin menerima path absolut dengan prefix sqlite:
+  } catch { /* already exists */ }
   const normalized = dataDir.replace(/\\/g, "/").replace(/\/$/, "");
   _dbPath = `sqlite:${normalized}/sonarix.db`;
   return _dbPath;
 }
 
+async function dbFilePath(): Promise<string> {
+  const p = await resolveDbPath();
+  return p.replace(/^sqlite:/, "");
+}
+
+async function fileSizeBytes(path: string): Promise<number> {
+  try {
+    const st = await stat(path.replace(/\\/g, "/"));
+    return st.size ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Import sonarix.db lama dari lokasi CWD-relative ke appLocalDataDir. */
+async function migrateLegacyDatabase(): Promise<void> {
+  if (_legacyMigrated) return;
+  _legacyMigrated = true;
+
+  const target = await dbFilePath();
+  const targetNorm = target.replace(/\\/g, "/");
+  const targetSize = await fileSizeBytes(targetNorm);
+  if (targetSize > 50_000) return;
+
+  const candidates: string[] = [];
+  try {
+    const exe = (await invoke<string>("get_exe_dir")).replace(/\\/g, "/");
+    candidates.push(`${exe}/sonarix.db`, `${exe}/../sonarix.db`);
+  } catch { /* skip */ }
+  try {
+    const res = (await resourceDir()).replace(/\\/g, "/");
+    candidates.push(`${res}/sonarix.db`, `${res}/../sonarix.db`);
+  } catch { /* skip */ }
+
+  let bestPath: string | null = null;
+  let bestSize = 0;
+
+  for (const path of candidates) {
+    const norm = path.replace(/\\/g, "/");
+    if (norm === targetNorm) continue;
+    const size = await fileSizeBytes(norm);
+    if (size > bestSize) {
+      bestSize = size;
+      bestPath = norm;
+    }
+  }
+
+  if (bestPath && bestSize > 1024) {
+    try {
+      await copyFile(bestPath, targetNorm);
+      console.info(`[DB] Migrated legacy database (${bestSize} bytes) from ${bestPath}`);
+    } catch (err) {
+      console.warn("[DB] Legacy migration failed:", err);
+    }
+  }
+}
+
 export async function getDb(): Promise<Database> {
   if (_db) return _db;
+  await migrateLegacyDatabase();
   const path = await resolveDbPath();
   _db = await Database.load(path);
   await migrate(_db);
   return _db;
 }
 
-/** Kembalikan path database aktual (untuk debugging) */
 export async function getDbPath(): Promise<string> {
   return resolveDbPath();
 }
@@ -110,18 +151,14 @@ async function migrate(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_songs_album       ON songs(album);
   `);
 
-  // Migrasi kolom baru untuk DB yang sudah ada
-  // (ALTER TABLE IF NOT EXISTS tidak didukung SQLite, pakai try/catch per kolom)
   const migrations = [
     "ALTER TABLE songs ADD COLUMN file_size INTEGER",
     "ALTER TABLE songs ADD COLUMN loved INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of migrations) {
-    try { await db.execute(sql); } catch { /* kolom sudah ada */ }
+    try { await db.execute(sql); } catch { /* column exists */ }
   }
 }
-
-// ── Song types ────────────────────────────────────────────────────────────────
 
 export interface Song {
   id: number;
@@ -136,11 +173,12 @@ export interface Song {
   format: string;
   cover_art: string | null;
   bpm: number | null;
-  file_size: number | null;   // [NEW] ukuran file dalam bytes
-  loved: number;              // [NEW] 0 = tidak, 1 = loved/favorit
+  file_size: number | null;
+  loved: number;
   date_added: string;
   stars?: number;
   play_count?: number;
+  has_cover?: boolean;
 }
 
 export interface PlayRecord {
@@ -148,9 +186,34 @@ export interface PlayRecord {
   played_at: string;
 }
 
-// ── Song CRUD ─────────────────────────────────────────────────────────────────
+const SONG_LIST_SELECT = `
+  SELECT s.id, s.path, s.title, s.artist, s.album, s.genre, s.year,
+         s.duration, s.bitrate, s.format, s.bpm, s.file_size, s.loved, s.date_added,
+         (s.cover_art IS NOT NULL AND s.cover_art != '') AS has_cover,
+         r.stars,
+         COALESCE(pc.play_count, 0) AS play_count
+  FROM songs s
+  LEFT JOIN ratings r ON r.song_id = s.id
+  LEFT JOIN (
+    SELECT song_id, COUNT(*) AS play_count FROM play_history GROUP BY song_id
+  ) pc ON pc.song_id = s.id
+`;
+
+function mapSongRow(row: Song & { has_cover?: number | boolean }): Song {
+  return {
+    ...row,
+    cover_art: null,
+    has_cover: Boolean(row.has_cover),
+  };
+}
 
 export async function upsertSong(db: Database, song: Omit<Song, "id" | "date_added">) {
+  let coverRef = song.cover_art;
+  if (coverRef?.startsWith("data:")) {
+    const fileRef = await persistCoverArt(song.path, coverRef);
+    if (fileRef) coverRef = fileRef;
+  }
+
   await db.execute(
     `INSERT INTO songs (path, title, artist, album, genre, year, duration, bitrate, format, cover_art, bpm, file_size)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
@@ -160,22 +223,26 @@ export async function upsertSong(db: Database, song: Omit<Song, "id" | "date_add
        bitrate=excluded.bitrate, format=excluded.format,
        cover_art=excluded.cover_art, bpm=excluded.bpm, file_size=excluded.file_size`,
     [song.path, song.title, song.artist, song.album, song.genre,
-     song.year, song.duration, song.bitrate, song.format, song.cover_art,
+     song.year, song.duration, song.bitrate, song.format, coverRef,
      song.bpm, song.file_size ?? null]
   );
 }
 
 export async function getAllSongs(db: Database): Promise<Song[]> {
-  return await db.select<Song[]>(`
-    SELECT s.*,
-           r.stars,
-           COUNT(ph.id) AS play_count
-    FROM songs s
-    LEFT JOIN ratings r       ON r.song_id = s.id
-    LEFT JOIN play_history ph ON ph.song_id = s.id
-    GROUP BY s.id
-    ORDER BY s.title
-  `);
+  const rows = await db.select<(Song & { has_cover?: number })[]>(
+    `${SONG_LIST_SELECT} ORDER BY s.title`
+  );
+  return rows.map(mapSongRow);
+}
+
+export async function getSongCoverArt(db: Database, songId: number): Promise<string | null> {
+  const rows = await db.select<{ cover_art: string | null }[]>(
+    "SELECT cover_art FROM songs WHERE id = $1",
+    [songId]
+  );
+  const stored = rows[0]?.cover_art;
+  if (!stored) return null;
+  return resolveCoverArtUrl(stored);
 }
 
 export async function deleteSong(db: Database, songId: number) {
@@ -190,18 +257,14 @@ export async function deleteSongs(db: Database, songIds: number[]) {
 
 export async function searchSongs(db: Database, query: string): Promise<Song[]> {
   const q = `%${query}%`;
-  return await db.select<Song[]>(
-    `SELECT s.*, r.stars, COUNT(ph.id) AS play_count
-     FROM songs s
-     LEFT JOIN ratings r ON r.song_id = s.id
-     LEFT JOIN play_history ph ON ph.song_id = s.id
+  const rows = await db.select<(Song & { has_cover?: number })[]>(
+    `${SONG_LIST_SELECT}
      WHERE s.title LIKE $1 OR s.artist LIKE $1 OR s.album LIKE $1
-     GROUP BY s.id ORDER BY s.title`,
+     ORDER BY s.title`,
     [q]
   );
+  return rows.map(mapSongRow);
 }
-
-// ── Rating ────────────────────────────────────────────────────────────────────
 
 export async function setRating(db: Database, songId: number, stars: number) {
   if (stars === 0) {
@@ -215,9 +278,6 @@ export async function setRating(db: Database, songId: number, stars: number) {
   }
 }
 
-// ── Loved ─────────────────────────────────────────────────────────────────────
-
-/** Toggle loved status lagu. loved=1 berarti favorit. Returns nilai baru (0 atau 1). */
 export async function toggleLoved(db: Database, songId: number): Promise<number> {
   const rows = await db.select<{ loved: number }[]>(
     "SELECT loved FROM songs WHERE id = $1", [songId]
@@ -228,19 +288,12 @@ export async function toggleLoved(db: Database, songId: number): Promise<number>
   return next;
 }
 
-/** Ambil semua lagu yang loved=1. */
 export async function getLovedSongs(db: Database): Promise<Song[]> {
-  return await db.select<Song[]>(`
-    SELECT s.*, r.stars, COUNT(ph.id) AS play_count
-    FROM songs s
-    LEFT JOIN ratings r ON r.song_id = s.id
-    LEFT JOIN play_history ph ON ph.song_id = s.id
-    WHERE s.loved = 1
-    GROUP BY s.id ORDER BY s.title
-  `);
+  const rows = await db.select<(Song & { has_cover?: number })[]>(
+    `${SONG_LIST_SELECT} WHERE s.loved = 1 ORDER BY s.title`
+  );
+  return rows.map(mapSongRow);
 }
-
-// ── Play History ──────────────────────────────────────────────────────────────
 
 export async function recordPlay(db: Database, songId: number) {
   await db.execute(`INSERT INTO play_history (song_id) VALUES ($1)`, [songId]);
@@ -252,8 +305,6 @@ export async function getPlayHistory(db: Database, limit = 200) {
     [limit]
   );
 }
-
-// ── Playlists ─────────────────────────────────────────────────────────────────
 
 export async function createPlaylist(db: Database, name: string): Promise<number> {
   const result = await db.execute(`INSERT INTO playlists (name) VALUES ($1)`, [name]);
@@ -293,21 +344,24 @@ export async function removeFromPlaylist(db: Database, playlistId: number, songI
 }
 
 export async function getPlaylistSongs(db: Database, playlistId: number): Promise<Song[]> {
-  return await db.select<Song[]>(`
-    SELECT s.*, r.stars, COUNT(ph.id) AS play_count
+  const rows = await db.select<(Song & { has_cover?: number })[]>(`
+    SELECT s.id, s.path, s.title, s.artist, s.album, s.genre, s.year,
+           s.duration, s.bitrate, s.format, s.bpm, s.file_size, s.loved, s.date_added,
+           (s.cover_art IS NOT NULL AND s.cover_art != '') AS has_cover,
+           r.stars,
+           COALESCE(pc.play_count, 0) AS play_count
     FROM playlist_songs ps
     JOIN songs s ON s.id = ps.song_id
     LEFT JOIN ratings r ON r.song_id = s.id
-    LEFT JOIN play_history ph ON ph.song_id = s.id
+    LEFT JOIN (
+      SELECT song_id, COUNT(*) AS play_count FROM play_history GROUP BY song_id
+    ) pc ON pc.song_id = s.id
     WHERE ps.playlist_id = $1
-    GROUP BY s.id ORDER BY ps.position
+    ORDER BY ps.position
   `, [playlistId]);
+  return rows.map(mapSongRow);
 }
 
-/**
- * Simpan urutan baru playlist ke DB setelah drag & drop.
- * songIds = array id lagu dalam urutan baru (index 0 = position 1).
- */
 export async function reorderPlaylistSongs(
   db: Database,
   playlistId: number,
@@ -322,8 +376,6 @@ export async function reorderPlaylistSongs(
   }
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────────
-
 export async function getSetting(db: Database, key: string): Promise<string | null> {
   const rows = await db.select<{ value: string }[]>(
     `SELECT value FROM settings WHERE key=$1`, [key]
@@ -337,4 +389,22 @@ export async function setSetting(db: Database, key: string, value: string) {
      ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
     [key, value]
   );
+}
+
+/** Migrasi cover art base64 lama ke file (background, batch). */
+export async function migrateBase64CoversBatch(db: Database, limit = 50): Promise<number> {
+  const rows = await db.select<{ id: number; path: string; cover_art: string }[]>(
+    `SELECT id, path, cover_art FROM songs
+     WHERE cover_art LIKE 'data:%' LIMIT $1`,
+    [limit]
+  );
+  let migrated = 0;
+  for (const row of rows) {
+    const fileRef = await persistCoverArt(row.path, row.cover_art);
+    if (fileRef) {
+      await db.execute("UPDATE songs SET cover_art = $1 WHERE id = $2", [fileRef, row.id]);
+      migrated++;
+    }
+  }
+  return migrated;
 }

@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { scanFolder } from "../../lib/scanner";
-import { getDb, setSetting } from "../../lib/db";
+import { getDb, setSetting, getAllSongs } from "../../lib/db";
 import type { Song } from "../../lib/db";
 
 interface Props {
@@ -59,8 +59,9 @@ export default function Onboarding({ onComplete }: Props) {
   const handleFinish = useCallback(async () => {
     const db = await getDb();
     await setSetting(db, "onboarded", "true");
-    onComplete(songs);
-  }, [songs, onComplete]);
+    const allSongs = await getAllSongs(db);
+    onComplete(Array.isArray(allSongs) ? allSongs : []);
+  }, [onComplete]);
 
   return (
     <div style={{

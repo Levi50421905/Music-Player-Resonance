@@ -30,7 +30,7 @@ export default function StarRating({ stars, onChange, size = 13, readonly = fals
           style={{
             fontSize: size,
             cursor: readonly ? "default" : "pointer",
-            color: n <= active ? "#F59E0B" : "#3f3f5a",
+            color: n <= active ? "#F59E0B" : "var(--border-medium)",
             transition: "color 0.12s, transform 0.1s",
             transform: !readonly && hover === n ? "scale(1.2)" : "scale(1)",
             display: "inline-block",

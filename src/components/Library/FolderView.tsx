@@ -336,7 +336,7 @@ function FolderDetail({ folder, onBack, onPlay }: {
             <span style={{ width: 22, textAlign: "center", fontSize: 11, color: "var(--text-faint)", fontFamily: "monospace", flexShrink: 0 }}>
               {i + 1}
             </span>
-            <CoverArt id={song.id} coverArt={song.cover_art} size={34} />
+            <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={34} />
             <div style={{ flex: 1, overflow: "hidden" }}>
               <div style={{ fontWeight: 500, fontSize: 13, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {song.title}

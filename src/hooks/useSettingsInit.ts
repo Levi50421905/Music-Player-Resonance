@@ -81,6 +81,11 @@ export function useSettingsInit() {
     }
     // ReplayGain
     audioEngine.setReplayGainEnabled(settings.replayGainEnabled !== false);
+    if (settings.replayGainMode) {
+      audioEngine.setReplayGainMode(settings.replayGainMode);
+    }
+    audioEngine.setGaplessEnabled(settings.gaplessEnabled !== false);
+    audioEngine.setMonoDownmix(!!settings.monoDownmix);
     // EQ
     if (settings.eqGains && Array.isArray(settings.eqGains)) {
       audioEngine.setEqPreset(settings.eqGains);

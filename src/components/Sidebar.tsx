@@ -204,7 +204,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
               position: "relative",
             }}
           >
-            <CoverArt id={song?.id ?? 0} coverArt={song?.cover_art ?? null} size={256} />
+            <CoverArt id={song?.id ?? 0} coverArt={song?.cover_art ?? null} hasCover={song?.has_cover} size={256} />
 
             {/* Subtle gradient overlay at bottom */}
             <div style={{
@@ -445,7 +445,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
                       background: "var(--bg-overlay)",
                       border: "1px solid var(--border)",
                     }}>
-                      <CoverArt id={nextSong.id} coverArt={nextSong.cover_art} size={30} />
+                      <CoverArt id={nextSong.id} coverArt={nextSong.cover_art} hasCover={nextSong.has_cover} size={30} />
                       <div style={{ flex: 1, overflow: "hidden" }}>
                         <div style={{
                           fontSize: 12, fontWeight: 500,

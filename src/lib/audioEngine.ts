@@ -279,6 +279,9 @@ export class AudioEngine {
   private _fadeToken     = 0;
   private _fadeTimer:    ReturnType<typeof setTimeout> | null = null;
   private _replayGainEnabled = true;
+  private _replayGainMode: "track" | "album" | "auto" = "track";
+  private _gaplessEnabled = true;
+  private _monoDownmix = false;
 
   private _currentBpm:  number | null = null;
   private _nextBpm:     number | null = null;
@@ -552,6 +555,39 @@ export class AudioEngine {
     }
   }
 
+  setReplayGainMode(mode: "track" | "album" | "auto"): void {
+    this._replayGainMode = mode;
+  }
+
+  setGaplessEnabled(enabled: boolean): void {
+    this._gaplessEnabled = enabled;
+  }
+
+  setMonoDownmix(enabled: boolean): void {
+    this._monoDownmix = enabled;
+  }
+
+  /** Fade volume up after resume (fade-in on unpause). */
+  fadeIn(durationSec = 0.5): void {
+    if (!this.ctx) {
+      this.resume();
+      return;
+    }
+    const target = this._volume;
+    const activeGain = this._gain();
+    const now = this.ctx.currentTime;
+    const dur = Math.max(0.1, durationSec);
+
+    if (activeGain) {
+      activeGain.gain.cancelScheduledValues(now);
+      activeGain.gain.setValueAtTime(0, now);
+      activeGain.gain.linearRampToValueAtTime(target, now + dur);
+    }
+    this.resume();
+  }
+
+  get gaplessEnabled(): boolean { return this._gaplessEnabled; }
+
   private _setRgGainLinear(linear: number, isActive: boolean): void {
     if (!this.ctx) return;
     const rgGain = isActive ? this._rgGain() : this._rgGainOther();
@@ -567,6 +603,91 @@ export class AudioEngine {
     if (!this._replayGainEnabled) return;
     const linear = Math.pow(10, (gainDb + REPLAYGAIN_PREAMP_DB) / 20);
     this._setRgGainLinear(linear, isActive);
+  }
+
+  private async _loadDirect(url: string, token: number): Promise<void> {
+    const el         = this._el()!;
+    this._applySlotVolumes();
+    const activeGain = this._gain();
+
+    if (this.ctx) {
+      try { await this.ctx.resume(); } catch {}
+    }
+
+    if (activeGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      activeGain.gain.cancelScheduledValues(now);
+      activeGain.gain.setValueAtTime(this._volume, now);
+    } else if (!this.ctx) {
+      el.volume = this._volume;
+    }
+
+    const otherGain = this._gainOther();
+    const otherEl   = this._elOther();
+    if (otherGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      otherGain.gain.cancelScheduledValues(now);
+      otherGain.gain.setValueAtTime(0, now);
+    }
+    if (otherEl) { otherEl.pause(); otherEl.src = ""; }
+
+    if (el.src !== url) {
+      el.src = url;
+      el.load();
+    }
+
+    try { await this.ctx?.resume(); } catch {}
+    if (token !== this._playToken) return;
+
+    try {
+      await waitForCanPlay(el, 5000);
+    } catch { /* timeout — still try */ }
+    if (token !== this._playToken) return;
+  }
+
+  /** Load track into player without starting playback (session restore). */
+  async prepare(filePath: string): Promise<boolean> {
+    await this.ensureInit();
+    if (this.ctx) {
+      try { await this.ctx.resume(); } catch {}
+    }
+
+    const myToken = ++this._playToken;
+    this._seqRef.v = myToken;
+    this._preloadFired = false;
+    this._isDecoding = false;
+    this._currentPath = filePath;
+    this._playStartTime = 0;
+    this._cancelFade();
+
+    let url: string;
+    try {
+      if (
+        this.preloadPath === filePath &&
+        this.preloadEl?.src &&
+        !this.preloadEl.error &&
+        this.preloadEl.readyState >= 2
+      ) {
+        url = this.preloadEl.src;
+      } else {
+        const needsDecode = NEEDS_DECODE.has(getExt(filePath));
+        if (needsDecode) this._isDecoding = true;
+        url = await getPlayableUrl(filePath, myToken, this._seqRef);
+        this._isDecoding = false;
+      }
+    } catch {
+      this._isDecoding = false;
+      return false;
+    }
+
+    if (myToken !== this._playToken) return false;
+
+    await this._loadDirect(url, myToken);
+    if (myToken !== this._playToken) return false;
+
+    this._el()?.pause();
+    this.preloadPath = null;
+    return true;
   }
 
   // ── play() ────────────────────────────────────────────────────────────────
@@ -681,55 +802,13 @@ export class AudioEngine {
   }
 
   private async _playDirect(url: string, token: number): Promise<void> {
-    const el         = this._el()!;
-    this._applySlotVolumes();
-    const activeGain = this._gain();
+    await this._loadDirect(url, token);
+    if (token !== this._playToken) return;
 
-    // RESUME DULU sebelum set gain — kritis untuk production build
-    if (this.ctx) {
-      try { await this.ctx.resume(); } catch {}
-    }
-
-    // Set gain AKTIF ke volume yang benar
-    if (activeGain && this.ctx) {
-      const now = this.ctx.currentTime;
-      activeGain.gain.cancelScheduledValues(now);
-      // Set langsung (bukan ramp) agar tidak tergantung timeline suspended
-      activeGain.gain.setValueAtTime(this._volume, now);
-    } else if (!this.ctx) {
-      el.volume = this._volume;
-    }
-
-    // Set gain slot LAIN ke 0 (mute)
-    const otherGain = this._gainOther();
-    const otherEl   = this._elOther();
-    if (otherGain && this.ctx) {
-      const now = this.ctx.currentTime;
-      otherGain.gain.cancelScheduledValues(now);
-      otherGain.gain.setValueAtTime(0, now);
-    }
-    if (otherEl) { otherEl.pause(); otherEl.src = ""; }
-
-    // Set src
-    if (el.src !== url) {
-      el.src = url;
-      el.load();
-    } else {
+    const el = this._el()!;
+    if (el.src === url) {
       el.currentTime = 0;
     }
-
-    // [FIX #5] Resume AudioContext lagi setelah set src
-    try { await this.ctx?.resume(); } catch {}
-if (token !== this._playToken) return;
-
-    // [FIX #4] Tunggu element siap sebelum play() di Tauri production
-    // Ini fix "play() gagal silent" yang terjadi di built app
-    try {
-      await waitForCanPlay(el, 5000);
-    } catch {
-      // Timeout atau error — coba play tetap
-    }
-    if (token !== this._playToken) return;
 
     try {
       await el.play();
@@ -737,7 +816,6 @@ if (token !== this._playToken) return;
       const errName = (e as Error)?.name;
       if (errName === "AbortError") return;
       if (errName === "NotAllowedError") {
-        // Coba resume AudioContext lagi lalu play ulang
         try {
           if (this.ctx) await this.ctx.resume();
           await el.play();

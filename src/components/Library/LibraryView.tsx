@@ -21,6 +21,10 @@ import CoverArt from "../CoverArt";
 import StarRating from "../StarRating";
 import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 import SongContextMenu, { ConfirmDeleteModal, BulkActionBar } from "../SongContextMenu";
+import { useSettingsStore } from "../../store";
+import { debounce, getVirtualListRange, throttle } from "../../utils/performance";
+
+const ROW_HEIGHT = 50;
 
 interface Props {
   onPlay:      (song: Song, contextList?: Song[]) => void;
@@ -93,6 +97,15 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const { currentSong, isPlaying } = usePlayerStore() as any;
 
   const [search, setSearch]             = useState("");
+  const [searchInput, setSearchInput]   = useState("");
+
+  const debouncedSetSearch = useCallback(
+    debounce((v: unknown) => setSearch(v as string), 200),
+    []
+  );
+
+  const [scrollTop, setScrollTop]       = useState(0);
+  const [containerH, setContainerH]     = useState(600);
 
   // State yang dipersist ke localStorage agar tidak reset saat app dibuka lagi
   const [_prefs] = useState(() => loadLibraryPrefs());
@@ -131,6 +144,21 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const tableRef      = useRef<HTMLDivElement>(null);
   const lastClickRef  = useRef<{ id: number; time: number }>({ id: -1, time: 0 });
   const lastSelectedIdxRef = useRef<number>(-1);
+  // [FIX BUG 3] Refs for dropdown close-on-outside-click
+  const viewMenuRef   = useRef<HTMLDivElement>(null);
+  const formatDropRef = useRef<HTMLDivElement>(null);
+
+  const { doubleClickAction } = useSettingsStore() as any;
+
+  // [FIX BUG 3] Close view menu / format dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (showViewMenu   && viewMenuRef.current   && !viewMenuRef.current.contains(e.target as Node))   setShowViewMenu(false);
+      if (showFormatDrop && formatDropRef.current && !formatDropRef.current.contains(e.target as Node)) setShowFormatDrop(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showViewMenu, showFormatDrop]);
 
   const safeSongs: Song[] = Array.isArray(songs) ? songs : [];
 
@@ -176,6 +204,31 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
     if (grouped) { const r: Song[] = []; for (const s of grouped.values()) r.push(...s); return r; }
     return filtered;
   }, [grouped, filtered]);
+
+  const virtualRange = useMemo(() => {
+    if (groupBy !== "none") return null;
+    return getVirtualListRange({
+      itemCount: filtered.length,
+      itemHeight: ROW_HEIGHT,
+      containerHeight: containerH,
+      scrollTop,
+      overscan: 5,
+    });
+  }, [groupBy, filtered.length, containerH, scrollTop]);
+
+  useEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerH(el.clientHeight));
+    ro.observe(el);
+    setContainerH(el.clientHeight);
+    const onScroll = throttle(() => setScrollTop(el.scrollTop), 32);
+    el.addEventListener("scroll", onScroll);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, []);
 
   const selectedSongs = useMemo(() =>
     flatList.filter(s => selected.has(s.id)),
@@ -276,7 +329,8 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
       onClick: async () => {
         const { upsertSong, getAllSongs } = await import("../../lib/db");
         for (const s of songsToDelete) try { await upsertSong(db, s); } catch {}
-        setSongs(Array.isArray(await getAllSongs(db)) ? await getAllSongs(db) : []);
+        const restored = await getAllSongs(db);
+        setSongs(Array.isArray(restored) ? restored : []);
         toastSuccess(`${ids.length} lagu dikembalikan`);
       },
     });
@@ -316,26 +370,47 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
     if (cs && cs.id === song.id) scs({ ...cs, loved: newVal });
   }, [setSongs]);
 
-  const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e: React.MouseEvent) => {
-    // If clicking checkbox area do nothing extra
-    if ((e.target as HTMLElement).closest("input[type=checkbox]")) return;
+const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e: React.MouseEvent) => {
+  // Ignore checkbox click
+  if ((e.target as HTMLElement).closest("input[type=checkbox]")) return;
 
-    if (selectionMode) {
-      // In selection mode: toggle selection
-      toggleSelect(song.id, rowIdx, e);
-      return;
-    }
+  if (selectionMode) {
+    toggleSelect(song.id, rowIdx, e);
+    return;
+  }
 
-    setFocusedRowIdx(rowIdx);
-    const now = Date.now(); const last = lastClickRef.current;
-    if (last.id === song.id && now - last.time < 400) {
-      lastClickRef.current = { id: -1, time: 0 };
+  setFocusedRowIdx(rowIdx);
+
+  const now = Date.now();
+  const last = lastClickRef.current;
+  const isDoubleClick = last.id === song.id && now - last.time < 400;
+
+  if (isDoubleClick) {
+    lastClickRef.current = { id: -1, time: 0 };
+
+    // 🔥 GUNAKAN SETTING USER
+    if (doubleClickAction === "queue") {
       handleAddToQueue([song]);
-    } else {
-      lastClickRef.current = { id: song.id, time: now };
+    } else if (doubleClickAction === "play") {
       onPlay(song, list);
+    } else if (doubleClickAction === "play_next") {
+      handlePlayNext([song]);
     }
-  }, [onPlay, handleAddToQueue, selectionMode, toggleSelect]);
+
+  } else {
+    lastClickRef.current = { id: song.id, time: now };
+
+    // Single click tetap play (default UX)
+    onPlay(song, list);
+  }
+}, [
+  onPlay,
+  handleAddToQueue,
+  handlePlayNext,
+  selectionMode,
+  toggleSelect,
+  doubleClickAction // ← penting biar reactive
+]);
 
   const sortIcon = (key: SortKey) => sortKey !== key ? "" : sortDir === "asc" ? " ↑" : " ↓";
 
@@ -369,8 +444,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
 
   let absoluteIdx = 0;
 
-  const renderRow = (song: Song, i: number, contextList: Song[]) => {
-    const rowIdx = absoluteIdx++;
+  const renderRow = (song: Song, rowIdx: number, contextList: Song[]) => {
     const isActive = !!currentSong?.id && song.id === currentSong.id;
     const isSelected = selected.has(song.id);
     const isFocused  = focusedRowIdx === rowIdx;
@@ -448,7 +522,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
         {/* Cover */}
         <td style={{ padding: "6px 6px 6px 0", width: 44 }}>
           <div style={{ position: "relative" }}>
-            <CoverArt id={song.id} coverArt={song.cover_art} size={34} />
+            <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={34} />
             {isNew && (
               <div style={{
                 position: "absolute", top: -3, right: -3,
@@ -588,8 +662,11 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg>
           </span>
           <input
-            ref={searchRef} value={search}
-            onChange={e => setSearch(e.target.value)}
+            ref={searchRef} value={searchInput}
+            onChange={e => {
+              setSearchInput(e.target.value);
+              debouncedSetSearch(e.target.value);
+            }}
             placeholder={`Cari ${safeSongs.length.toLocaleString()} lagu…`}
             style={{
               width: "100%", padding: "7px 28px 7px 28px",
@@ -600,8 +677,8 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
             onFocus={e => e.currentTarget.style.borderColor = "rgba(124,58,237,0.4)"}
             onBlur={e => e.currentTarget.style.borderColor = "var(--border)"}
           />
-          {search && (
-            <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 13 }}>✕</button>
+          {searchInput && (
+            <button onClick={() => { setSearchInput(""); setSearch(""); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 13 }}>✕</button>
           )}
         </div>
 
@@ -622,7 +699,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
             ))}
           </div>
         ) : (
-          <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}>
+          <div ref={formatDropRef} style={{ position: "relative" }}>
             <button onClick={() => setShowFormatDrop(v => !v)} style={{
               padding: "4px 10px", borderRadius: "var(--radius-sm, 6px)", fontSize: 11, cursor: "pointer",
               border: "1px solid",
@@ -656,7 +733,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
         )}
 
         {/* View menu */}
-        <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}>
+        <div ref={viewMenuRef} style={{ position: "relative" }}>
           <button onClick={() => setShowViewMenu(v => !v)} style={{
             padding: "4px 10px", borderRadius: "var(--radius-sm, 6px)", fontSize: 11, cursor: "pointer",
             border: "1px solid var(--border)", background: "transparent",
@@ -833,10 +910,31 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
                       </span>
                     </td>
                   </tr>
-                  {gSongs.map((song, i) => renderRow(song, i, gSongs))}
+                  {gSongs.map((song, i) => {
+                    const rowIdx = absoluteIdx++;
+                    return renderRow(song, rowIdx, flatList);
+                  })}
                 </React.Fragment>
               ))
-              : filtered.map((song: Song, i: number) => renderRow(song, i, filtered))}
+              : (() => {
+                const list = virtualRange
+                  ? filtered.slice(virtualRange.startIndex, virtualRange.endIndex + 1)
+                  : filtered;
+                const baseIdx = virtualRange?.startIndex ?? 0;
+                return (
+                  <>
+                    {virtualRange && virtualRange.offsetY > 0 && (
+                      <tr aria-hidden style={{ height: virtualRange.offsetY }}><td colSpan={colCount} /></tr>
+                    )}
+                    {list.map((song: Song, i: number) => renderRow(song, baseIdx + i, filtered))}
+                    {virtualRange && virtualRange.totalHeight - virtualRange.offsetY - list.length * ROW_HEIGHT > 0 && (
+                      <tr aria-hidden style={{ height: virtualRange.totalHeight - virtualRange.offsetY - list.length * ROW_HEIGHT }}>
+                        <td colSpan={colCount} />
+                      </tr>
+                    )}
+                  </>
+                );
+              })()}
           </tbody>
         </table>
       </div>

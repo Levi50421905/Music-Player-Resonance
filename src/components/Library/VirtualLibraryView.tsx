@@ -256,7 +256,7 @@ export default function VirtualLibraryView({ onPlay, onRating }: Props) {
                       }
                     </td>
                     <td style={{ width: 44, padding: "0 4px" }}>
-                      <CoverArt id={song.id} coverArt={song.cover_art} size={38} />
+                      <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={38} />
                     </td>
                     <td style={{ padding: "0 8px" }}>
                       <div style={{

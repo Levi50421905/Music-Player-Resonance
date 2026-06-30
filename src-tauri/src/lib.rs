@@ -65,11 +65,12 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:sonarix.db", vec![])
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             get_app_version,
+            get_exe_dir,
+            read_file_prefix,
             open_file_manager,
             decode_audio_to_cache,
             get_cache_path,
@@ -151,7 +152,7 @@ async fn watch_folder(app: tauri::AppHandle, path: String) -> Result<(), String>
                 _ = &mut stop_rx => {
                     break;
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
                     match collect_audio_files(&watch_path_clone) {
                         Ok(current_files) => {
                             let current_set: std::collections::HashSet<PathBuf> =
@@ -234,6 +235,28 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> 
 #[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+fn get_exe_dir() -> Result<String, String> {
+    std::env::current_exe()
+        .map_err(|e| e.to_string())
+        .and_then(|p| {
+            p.parent()
+                .map(|d| d.to_string_lossy().to_string())
+                .ok_or_else(|| "No parent dir".to_string())
+        })
+}
+
+#[tauri::command]
+fn read_file_prefix(path: String, len: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let cap = len.min(512 * 1024) as usize;
+    let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; cap];
+    let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(n);
+    Ok(buf)
 }
 
 #[tauri::command]

@@ -20,7 +20,8 @@ interface Handlers {
   onToggleLyrics: () => void;
   onOpenSettings: () => void;
   onFocusSearch: () => void;
-  onToggleCheatsheet?: () => void; // [NEW]
+  onRating?: (songId: number, stars: number) => void;
+  onToggleCheatsheet?: () => void;
 }
 
 export function useKeyboardShortcuts(handlers: Handlers) {
@@ -134,16 +135,19 @@ export function useKeyboardShortcuts(handlers: Handlers) {
           break;
 
         // ── Rating 1–5 ────────────────────────────────────────────────────
-        case "Digit1": case "Digit2": case "Digit3":
-        case "Digit4": case "Digit5":
-          if (!ctrl && currentSong) {
-            const stars = parseInt(e.code.replace("Digit", ""));
-            usePlayerStore.getState().setCurrentSong?.({
-              ...currentSong,
-              stars: currentSong.stars === stars ? 0 : stars,
-            });
-          }
-          break;
+case "Digit1":
+case "Digit2":
+case "Digit3":
+case "Digit4":
+case "Digit5":
+  if (!ctrl && currentSong) {
+    const stars = parseInt(e.code.replace("Digit", ""));
+    const newStars = currentSong.stars === stars ? 0 : stars;
+
+    // ✅ FIX: pakai handler dari App (biar masuk DB)
+    handlers.onRating?.(currentSong.id, newStars);
+  }
+  break;
       }
     };
 

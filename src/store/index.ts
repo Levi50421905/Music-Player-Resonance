@@ -58,6 +58,8 @@ interface PlayerState {
   unifiedQueue: QueueItem[];
   _queueHistory: QueueSnapshot[];
   isQueueShuffled: boolean;
+  /** Persisted backup of upcoming tracks when unified queue cannot be rebuilt. */
+  upcomingQueue: Song[];
 
   _rebuildUnified: () => void;
   _saveSnapshot: (description?: string) => void;
@@ -102,6 +104,28 @@ interface PlayerState {
   clearQueue: () => void;
 }
 
+function slimSong(s: Song): Song {
+  return {
+    id: s.id,
+    path: s.path,
+    title: s.title,
+    artist: s.artist,
+    album: s.album,
+    genre: s.genre ?? "",
+    year: s.year,
+    duration: s.duration,
+    bitrate: s.bitrate ?? 0,
+    format: s.format,
+    cover_art: null,
+    bpm: s.bpm,
+    file_size: s.file_size,
+    loved: s.loved ?? 0,
+    date_added: s.date_added ?? "",
+    stars: s.stars,
+    has_cover: s.has_cover,
+  };
+}
+
 function shuffleIndices(count: number, excludeFirst?: number): number[] {
   const arr = Array.from({ length: count }, (_, i) => i);
   if (excludeFirst !== undefined) {
@@ -113,6 +137,20 @@ function shuffleIndices(count: number, excludeFirst?: number): number[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/** Align contextIndex with the song that is actually playing. */
+function syncContextIndexToCurrentSong(
+  playContext: Song[],
+  contextIndex: number,
+  currentSong: Song | null,
+): number {
+  if (!currentSong || playContext.length === 0) {
+    return Math.max(0, Math.min(contextIndex, Math.max(0, playContext.length - 1)));
+  }
+  const idx = playContext.findIndex(s => s.id === currentSong.id);
+  if (idx >= 0) return idx;
+  return Math.max(0, Math.min(contextIndex, playContext.length - 1));
 }
 
 function buildUnified(
@@ -163,6 +201,7 @@ export const usePlayerStore = create<PlayerState>()(
       unifiedQueue: [],
       _queueHistory: [],
       isQueueShuffled: false,
+      upcomingQueue: [],
       queue: [],
       queueIndex: 0,
       shuffle: false,
@@ -171,9 +210,17 @@ export const usePlayerStore = create<PlayerState>()(
       // ── Internal ────────────────────────────────────────────────────────
 
       _rebuildUnified: () => {
-        const { manualQueue, playContext, contextIndex, shuffleMode, _shufflePool } = get();
-        const unified = buildUnified(manualQueue, playContext, contextIndex, shuffleMode, _shufflePool);
-        set({ unifiedQueue: unified });
+        const { manualQueue, playContext, contextIndex, shuffleMode, _shufflePool, currentSong } = get();
+        const syncedIndex = syncContextIndexToCurrentSong(playContext, contextIndex, currentSong);
+        if (syncedIndex !== contextIndex) {
+          set({ contextIndex: syncedIndex, queueIndex: syncedIndex });
+        }
+        const idx = syncedIndex;
+        const unified = buildUnified(manualQueue, playContext, idx, shuffleMode, _shufflePool);
+        set({
+          unifiedQueue: unified,
+          upcomingQueue: unified.slice(0, 100).map(x => slimSong(x.song)),
+        });
       },
 
       _saveSnapshot: (description) => {
@@ -193,7 +240,9 @@ export const usePlayerStore = create<PlayerState>()(
       // ── Setters dasar ──────────────────────────────────────────────────
 
       setCurrentSong: (song) => {
-        set({ currentSong: song });
+        const { playContext, contextIndex } = get();
+        const idx = syncContextIndexToCurrentSong(playContext, contextIndex, song);
+        set({ currentSong: song, contextIndex: idx, queueIndex: idx });
         get()._rebuildUnified();
       },
       setIsPlaying: (v) => set({ isPlaying: v }),
@@ -525,9 +574,47 @@ export const usePlayerStore = create<PlayerState>()(
         repeatMode: s.repeatMode,
         contextName: s.contextName,
         isQueueShuffled: s.isQueueShuffled,
-        currentSong: s.currentSong,
-        manualQueue: s.manualQueue.slice(0, 50),
+        isPlaying: false,
+        currentSong: s.currentSong ? slimSong(s.currentSong) : null,
+        manualQueue: s.manualQueue.slice(0, 50).map(slimSong),
+        playContext: s.playContext.slice(0, 500).map(slimSong),
+        contextIndex: s.contextIndex,
+        _shufflePool: s._shufflePool.slice(0, 500),
+        upcomingQueue: (s.unifiedQueue?.length
+          ? s.unifiedQueue.map(x => slimSong(x.song))
+          : (s.upcomingQueue ?? []).map(slimSong)
+        ).slice(0, 100),
       }),
+      // Rebuild unifiedQueue + queue after rehydration from localStorage
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        state.isPlaying = false;
+        const safeCtx    = Array.isArray(state.playContext)    ? state.playContext    : [];
+        const safePool   = Array.isArray(state._shufflePool)   ? state._shufflePool   : [];
+        const safeManual = Array.isArray(state.manualQueue)    ? state.manualQueue    : [];
+        const safeUpcoming = Array.isArray(state.upcomingQueue) ? state.upcomingQueue : [];
+        const syncedIdx  = syncContextIndexToCurrentSong(
+          safeCtx, state.contextIndex ?? 0, state.currentSong ?? null,
+        );
+        state.contextIndex = syncedIdx;
+        state.queueIndex   = syncedIdx;
+        let unified = buildUnified(
+          safeManual, safeCtx, syncedIdx, state.shuffleMode ?? "off", safePool,
+        );
+        // Restore from backup if rebuild produced empty queue but we had upcoming tracks
+        if (unified.length === 0 && safeUpcoming.length > 0) {
+          const currentId = state.currentSong?.id;
+          const restoredManual = safeUpcoming.filter(s => s.id !== currentId);
+          if (restoredManual.length > 0) {
+            state.manualQueue = restoredManual;
+            unified = buildUnified(
+              restoredManual, safeCtx, syncedIdx, state.shuffleMode ?? "off", safePool,
+            );
+          }
+        }
+        state.unifiedQueue = unified;
+        state.queue        = safeCtx;
+      },
       storage: {
         getItem: (name: string) => {
           try {
@@ -549,8 +636,12 @@ export const usePlayerStore = create<PlayerState>()(
                   repeatMode: (value as any)?.state?.repeatMode ?? "repeat_all",
                   currentSong: (value as any)?.state?.currentSong ?? null,
                   contextName: (value as any)?.state?.contextName ?? "",
-                  isQueueShuffled: false,
-                  manualQueue: [],
+                  isQueueShuffled: (value as any)?.state?.isQueueShuffled ?? false,
+                  manualQueue: (value as any)?.state?.manualQueue ?? [],
+                  upcomingQueue: (value as any)?.state?.upcomingQueue ?? [],
+                  playContext:   (value as any)?.state?.playContext   ?? [],
+                  contextIndex:  (value as any)?.state?.contextIndex  ?? 0,
+                  _shufflePool:  (value as any)?.state?._shufflePool  ?? [],
                 },
                 version: (value as any)?.version,
               };
@@ -567,6 +658,90 @@ export const usePlayerStore = create<PlayerState>()(
     }
   )
 );
+
+/** Wait until Zustand persist has rehydrated player state from localStorage. */
+export function waitForPlayerHydration(): Promise<void> {
+  return new Promise((resolve) => {
+    if (usePlayerStore.persist.hasHydrated()) {
+      resolve();
+      return;
+    }
+    const unsub = usePlayerStore.persist.onFinishHydration(() => {
+      unsub();
+      resolve();
+    });
+  });
+}
+
+/** Merge full library metadata into persisted slim queue/current song. */
+export function enrichFromLibrary(library: Song[]): void {
+  const byId = new Map(library.map(s => [s.id, s]));
+  const resolve = (s: Song) => byId.get(s.id) ?? s;
+  const state = usePlayerStore.getState();
+  usePlayerStore.setState({
+    currentSong: state.currentSong ? resolve(state.currentSong) : null,
+    playContext: state.playContext.map(resolve),
+    manualQueue: state.manualQueue.map(resolve),
+    queue: state.playContext.map(resolve),
+  });
+  usePlayerStore.getState()._rebuildUnified();
+}
+
+/** Drop songs removed from library; fix indices after restart. */
+export function prunePlayerContext(library: Song[]): void {
+  const ids = new Set(library.map(s => s.id));
+  const state = usePlayerStore.getState();
+  const keep = (s: Song) => ids.has(s.id);
+
+  const playContext = state.playContext.filter(keep);
+  const manualQueue = state.manualQueue.filter(keep);
+  const upcomingQueue = (state.upcomingQueue ?? []).filter(keep);
+
+  let currentSong = state.currentSong && keep(state.currentSong)
+    ? (library.find(s => s.id === state.currentSong!.id) ?? state.currentSong)
+    : null;
+
+  let contextIndex = syncContextIndexToCurrentSong(
+    playContext, state.contextIndex, currentSong,
+  );
+
+  if (!currentSong && playContext.length > 0) {
+    currentSong = playContext[contextIndex] ?? playContext[0] ?? null;
+    contextIndex = currentSong
+      ? playContext.findIndex(s => s.id === currentSong!.id)
+      : 0;
+  }
+
+  const shufflePool = state._shufflePool.filter(
+    i => i >= 0 && i < playContext.length && i !== contextIndex
+  );
+
+  usePlayerStore.setState({
+    playContext,
+    manualQueue,
+    upcomingQueue,
+    contextIndex,
+    currentSong,
+    _shufflePool: shufflePool,
+    queue: playContext,
+    queueIndex: contextIndex,
+    isPlaying: false,
+  });
+  usePlayerStore.getState()._rebuildUnified();
+
+  // If queue still empty after rebuild, restore from persisted backup
+  const after = usePlayerStore.getState();
+  if (after.unifiedQueue.length === 0 && upcomingQueue.length > 0) {
+    const currentId = after.currentSong?.id;
+    const restored = upcomingQueue
+      .map(s => library.find(l => l.id === s.id) ?? s)
+      .filter(s => s.id !== currentId);
+    if (restored.length > 0) {
+      usePlayerStore.setState({ manualQueue: restored });
+      usePlayerStore.getState()._rebuildUnified();
+    }
+  }
+}
 
 // ── Library Store ─────────────────────────────────────────────────────────────
 
@@ -630,7 +805,7 @@ interface SettingsState {
   autoScanOnStart: boolean;
   compactMode: boolean;
   animationSpeed: "normal" | "slow" | "off";
-  doubleClickAction: "play" | "queue";
+  doubleClickAction: "play" | "queue" | "play_next";
   playCountThreshold: number;
   autoFetchLyrics: boolean;
   lyricsSource: "lrclib" | "lyrics_ovh";
@@ -647,6 +822,8 @@ interface SettingsState {
   queuePanelPosition: "right" | "bottom";
   notificationsEnabled: boolean;
   excludeFolders: string[];
+
+  lastPlaylistId: number | null;
 
   setTheme: (t: SettingsState["theme"]) => void;
   setAccentColor: (c: string) => void;
@@ -682,6 +859,7 @@ interface SettingsState {
   addExcludeFolder: (path: string) => void;
   removeExcludeFolder: (path: string) => void;
   setPlayCountThreshold: (v: number) => void;
+  setLastPlaylistId: (id: number | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -706,6 +884,7 @@ export const useSettingsStore = create<SettingsState>()(
       queuePanelPosition: "right",
       notificationsEnabled: true,
       excludeFolders: [],
+      lastPlaylistId: null,
 
       setTheme:            (t) => set({ theme: t }),
       setAccentColor:      (c) => set({ accentColor: c }),
@@ -753,6 +932,7 @@ export const useSettingsStore = create<SettingsState>()(
       removeExcludeFolder: (path) => set((s) => ({
         excludeFolders: s.excludeFolders.filter((f) => f !== path),
       })),
+      setLastPlaylistId: (id) => set({ lastPlaylistId: id }),
     }),
     { name: "sonarix-settings" }
   )

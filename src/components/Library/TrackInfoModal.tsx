@@ -57,7 +57,7 @@ export default function TrackInfoModal({ song, onClose }: Props) {
           background: "var(--bg-surface)",
           borderBottom: "1px solid var(--border-subtle)",
         }}>
-          <CoverArt id={song.id} coverArt={song.cover_art} size={72} />
+          <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={72} />
           <div style={{ flex: 1, overflow: "hidden" }}>
             <h2 style={{
               fontWeight: 700, fontSize: 17, letterSpacing: "-0.3px",

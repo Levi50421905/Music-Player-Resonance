@@ -1,9 +1,11 @@
 /**
- * CoverArt.tsx — Reusable album art component
- * Tampilkan cover art dari base64 jika ada, fallback ke generated gradient art
+ * CoverArt.tsx — Lazy-load cover art from DB/disk
  */
 
-import React from "react";
+import React, { useState, useEffect } from "react";
+import { getDb, getSongCoverArt } from "../lib/db";
+
+import { useSettingsStore } from "../store";
 
 const PALETTES = [
   ["#7C3AED", "#DB2777"], ["#0EA5E9", "#10B981"], ["#F59E0B", "#EF4444"],
@@ -11,28 +13,64 @@ const PALETTES = [
   ["#8B5CF6", "#06B6D4"], ["#10B981", "#84CC16"],
 ];
 
+const coverCache = new Map<number, string | null>();
+
 interface Props {
   id: number;
-  coverArt: string | null | undefined;
+  coverArt?: string | null;
+  hasCover?: boolean;
   size?: number;
   style?: React.CSSProperties;
 }
 
-export default function CoverArt({ id, coverArt, size = 48, style }: Props) {
-  const radius = Math.round(size * 0.14);
+export default function CoverArt({ id, coverArt, hasCover, size = 48, style }: Props) {
+  const coverArtStyle = useSettingsStore(s => s.coverArtStyle);
+  const [src, setSrc] = useState<string | null>(coverArt ?? coverCache.get(id) ?? null);
+  const radius = coverArtStyle === "circle"
+    ? "50%"
+    : coverArtStyle === "square"
+      ? 0
+      : Math.round(size * 0.14);
 
-  if (coverArt) {
+  useEffect(() => {
+    if (coverArt) {
+      setSrc(coverArt);
+      coverCache.set(id, coverArt);
+      return;
+    }
+    if (coverCache.has(id)) {
+      setSrc(coverCache.get(id) ?? null);
+      return;
+    }
+    if (!hasCover) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await getDb();
+        const url = await getSongCoverArt(db, id);
+        if (!cancelled) {
+          coverCache.set(id, url);
+          setSrc(url);
+        }
+      } catch { /* fallback art */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [id, coverArt, hasCover]);
+
+  if (src) {
     return (
       <img
-        src={coverArt}
+        src={src}
         width={size} height={size}
+        loading="lazy"
         style={{ borderRadius: radius, objectFit: "cover", flexShrink: 0, display: "block", ...style }}
         alt=""
       />
     );
   }
 
-  // Generated art fallback
   const [c1, c2] = PALETTES[id % PALETTES.length];
   const s = size;
   const circles = [
@@ -57,4 +95,9 @@ export default function CoverArt({ id, coverArt, size = 48, style }: Props) {
       <circle cx={s / 2} cy={s / 2} r={s * 0.055} fill="rgba(255,255,255,0.85)" />
     </svg>
   );
+}
+
+export function invalidateCoverCache(songId?: number): void {
+  if (songId !== undefined) coverCache.delete(songId);
+  else coverCache.clear();
 }

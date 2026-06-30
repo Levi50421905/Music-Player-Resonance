@@ -376,7 +376,7 @@ export default function QueueView({ onPlay, onPlayFromQueue }: Props) {
                           onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                         >
                           <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "monospace", width: 24, textAlign: "right", flexShrink: 0 }}>#{idx + 1}</span>
-                          <CoverArt id={item.song.id} coverArt={item.song.cover_art} size={28} />
+                          <CoverArt id={item.song.id} coverArt={item.song.cover_art} hasCover={item.song.has_cover} size={28} />
                           <div style={{ flex: 1, overflow: "hidden" }}>
                             <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-primary)" }}>
                               {item.song.title}
@@ -690,7 +690,7 @@ function QueueRow({ song, index, isActive, isNowPlaying, isManual, isDragging, i
         onClick={() => !isNowPlaying && onPlay(song)}
         style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, overflow: "hidden" }}
       >
-        <CoverArt id={song.id} coverArt={song.cover_art} size={34} />
+        <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={34} />
         <div style={{ flex: 1, overflow: "hidden" }}>
           <div style={{
             fontWeight: 500, fontSize: 13, color: isActive ? "#c4b5fd" : hovered && !isNowPlaying ? "var(--accent-light)" : "var(--text-primary)",

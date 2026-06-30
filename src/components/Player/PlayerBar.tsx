@@ -222,7 +222,7 @@ export default function PlayerBar({ onPlayPause, onNext, onPrev }: Props) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: 220, flexShrink: 0 }}>
         {currentSong ? (
           <>
-            <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} size={46} />
+            <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} hasCover={currentSong.has_cover} size={46} />
             <div style={{ overflow: "hidden" }}>
               <div style={{
                 fontWeight: 600,

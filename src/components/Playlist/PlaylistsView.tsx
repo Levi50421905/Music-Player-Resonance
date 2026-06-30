@@ -9,7 +9,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { useLibraryStore, usePlayerStore } from "../../store";
+import { useLibraryStore, usePlayerStore, useSettingsStore } from "../../store";
 import {
   getDb, createPlaylist, getPlaylistSongs, getPlaylists,
   removeFromPlaylist, deletePlaylist, reorderPlaylistSongs,
@@ -31,6 +31,7 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).p
 export default function PlaylistsView({ onPlay, onPlayAll }: Props) {
   const { playlists, setPlaylists } = useLibraryStore();
   const { setSongs } = useLibraryStore() as any;
+  const { lastPlaylistId, setLastPlaylistId } = useSettingsStore();
   const [selected, setSelected]     = useState<number | null>(null);
   const [songs, setSongsLocal]      = useState<Song[]>([]);
   const [newName, setNewName]       = useState("");
@@ -117,13 +118,23 @@ export default function PlaylistsView({ onPlay, onPlayAll }: Props) {
   }, []);
 
   // Reset selection mode saat ganti playlist
-  const handleSelect = async (id: number) => {
+  const handleSelect = useCallback(async (id: number) => {
     setSelected(id);
+    setLastPlaylistId(id);
     exitSelectionMode();
     const db = await getDb();
     setSongsLocal(await getPlaylistSongs(db, id));
     setPlaylists(await getPlaylists(db));
-  };
+  }, [exitSelectionMode, setLastPlaylistId, setPlaylists]);
+
+  const restoredPlaylist = useRef(false);
+  useEffect(() => {
+    if (restoredPlaylist.current || playlists.length === 0 || selected !== null) return;
+    if (lastPlaylistId && playlists.some(p => p.id === lastPlaylistId)) {
+      restoredPlaylist.current = true;
+      handleSelect(lastPlaylistId);
+    }
+  }, [playlists, lastPlaylistId, selected, handleSelect]);
 
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
@@ -227,6 +238,7 @@ export default function PlaylistsView({ onPlay, onPlayAll }: Props) {
       {confirmDelSongs && (
         <ConfirmDeleteModal
           songs={confirmDelSongs}
+          variant="playlist"
           onConfirm={() => handleDeleteSongs(confirmDelSongs)}
           onCancel={() => setConfirmDelSongs(null)}
         />
@@ -644,7 +656,7 @@ function SongRow({ song, index, isDragging, isSelected, selectionMode, onPlay, o
         display: "flex", alignItems: "center", gap: 9,
         flex: 1, overflow: "hidden", cursor: selectionMode ? "pointer" : "pointer",
       }}>
-        <CoverArt id={song.id} coverArt={song.cover_art} size={36} />
+        <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={36} />
         <div style={{ flex: 1, overflow: "hidden" }}>
           <div style={{
             fontWeight: 500, fontSize: 13,

@@ -18,16 +18,18 @@ import { listen } from "@tauri-apps/api/event";
 import { audioEngine, enqueueBgDecode } from "./lib/audioEngine";
 import type { PreloadState } from "./lib/audioEngine";
 import {
-  getDb, getAllSongs, setRating, recordPlay, getPlaylists, getSetting,
+  getDb, getAllSongs, setRating, recordPlay, getPlaylists, getSetting, getPlayHistory,
+  migrateBase64CoversBatch,
 } from "./lib/db";
-import { scanFolder, addFiles } from "./lib/scanner";
-import { usePlayerStore, useLibraryStore, useSettingsStore } from "./store";
+import { scanFolder, addFiles, importPaths } from "./lib/scanner";
+import { usePlayerStore, useLibraryStore, useSettingsStore, enrichFromLibrary, waitForPlayerHydration, prunePlayerContext } from "./store";
 import { useMiniPlayer, useMiniPlayerCommands } from "./components/Player/useMiniPlayer";
 import { useKeyboardShortcuts } from "./components/Player/useKeyboardShortcuts";
 import { useTrackNotification, requestNotificationPermission } from "./components/Notification/useTrackNotification";
 import type { Song } from "./lib/db";
 
 // ── [NEW] Import 3 hal baru ──────────────────────────────────────────────────
+import { usePlaybackPersist, applyPendingSeek, restorePlaybackSession } from "./hooks/usePlaybackPersist";
 import { useSettingsInit } from "./hooks/useSettingsInit";   // ← [NEW]
 import { useFolderWatch } from "./lib/useFolderWatch";        // ← [NEW] sudah ada, tinggal import
 import { useLang } from "./lib/i18n";                         // ← [NEW] untuk label tab
@@ -45,7 +47,7 @@ import PlayerBarV2 from "./components/Player/PlayerBarV2";
 import ScanProgress, { EmptyLibraryState } from "./components/Library/ScanProgress";
 import SettingsPanel from "./components/Settings/SettingsPanel";
 import FolderView from "./components/Library/FolderView";
-import SleepTimerButton, { useSleepTimer } from "./components/Player/SleepTimer";
+import SleepTimerButton, { useSleepTimer, SleepTimerBanner } from "./components/Player/SleepTimer";
 import KeyboardCheatsheet from "./components/KeyboardCheatsheet";
 import ToastContainer, { toastSuccess, toastError, toastInfo } from "./components/Notification/ToastSystem";
 
@@ -230,7 +232,14 @@ useEffect(() => {
     playNextTrack,
   } = usePlayerStore();
 
-  const { songs, setSongs, setPlaylists, setLoading, setScanProgress } = useLibraryStore();
+ const {
+  songs,
+  setSongs,
+  setPlaylists,
+  setLoading,
+  setScanProgress,
+  isLoading
+} = useLibraryStore();
   const { eqGains, accentColor, toggleLyrics, crossfadeSec = 0, replayGainEnabled } = useSettingsStore() as any;
   const { openMini, closeMini, isMiniOpen } = useMiniPlayer();
 
@@ -276,22 +285,50 @@ useEffect(() => {
     (async () => {
       setLoading(true);
       try {
+        await waitForPlayerHydration();
         const db = await getDb();
-        const [allSongs, allPlaylists] = await Promise.all([getAllSongs(db), getPlaylists(db)]);
+        const [allSongs, allPlaylists, playHistory] = await Promise.all([
+          getAllSongs(db),
+          getPlaylists(db),
+          getPlayHistory(db, 500),
+        ]);
         const safeSongs = Array.isArray(allSongs) ? allSongs : [];
         setSongs(safeSongs);
+        enrichFromLibrary(safeSongs);
+        prunePlayerContext(safeSongs);
         setPlaylists(Array.isArray(allPlaylists) ? allPlaylists : []);
+        // Populate in-memory history from DB (newest first, already sorted by query)
+        if (Array.isArray(playHistory) && playHistory.length > 0) {
+          // Bulk-set: directly write to store state bypassing addToHistory's 500-cap logic
+          usePlayerStore.setState(s => ({
+            history: playHistory.slice(0, 500).map(r => ({
+              song_id: r.song_id,
+              played_at: r.played_at,
+            })),
+          }));
+        }
         if ("requestIdleCallback" in window) {
-          (window as any).requestIdleCallback(() => {
+          (window as any).requestIdleCallback(async () => {
             safeSongs
               .filter(s => ["flac","ape","wma","alac"].includes((s.format ?? "").toLowerCase()))
               .sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0))
               .slice(0, 5)
               .forEach(s => enqueueBgDecode(s.path));
-          }, { timeout: 5000 });
+            try {
+              const db = await getDb();
+              let total = 0;
+              for (let i = 0; i < 20; i++) {
+                const n = await migrateBase64CoversBatch(db, 50);
+                total += n;
+                if (n === 0) break;
+              }
+              if (total > 0) console.info(`[App] Migrated ${total} cover art entries to disk`);
+            } catch { /* background */ }
+          }, { timeout: 8000 });
         }
-      } finally {
         usePlayerStore.getState()._rebuildUnified();
+        await restorePlaybackSession(setCurrentTime, setDuration, setProgress);
+      } finally {
         setLoading(false);
       }
     })();
@@ -301,6 +338,13 @@ useEffect(() => {
   useEffect(() => { if (eqGains) audioEngine.setEqPreset(eqGains); }, [eqGains]);
   useEffect(() => { audioEngine.setCrossfade(crossfadeSec); }, [crossfadeSec]);
   useEffect(() => { audioEngine.setReplayGainEnabled(replayGainEnabled !== false); }, [replayGainEnabled]);
+
+  useEffect(() => {
+    const { gaplessEnabled, replayGainMode, monoDownmix } = useSettingsStore.getState() as any;
+    audioEngine.setGaplessEnabled(gaplessEnabled !== false);
+    if (replayGainMode) audioEngine.setReplayGainMode(replayGainMode);
+    audioEngine.setMonoDownmix(!!monoDownmix);
+  }, []);
 
   const handleNextRef = useRef<() => void>(() => {});
   const playStartTimeRef = useRef<number>(0);
@@ -381,6 +425,7 @@ useEffect(() => {
   }, [activeTab]);
 
   const playSong = useCallback(async (song: Song) => {
+    errorSkipCountRef.current = 0;
     setCurrentSong(song);
     setIsPlaying(true);
     playStartTimeRef.current = Date.now();
@@ -388,8 +433,12 @@ useEffect(() => {
     playCountedRef.current = false;
     try {
       await audioEngine.play(song.path);
-      const el = (audioEngine as any).elA as HTMLAudioElement | null;
-      if (el) el.playbackRate = playbackSpeed;
+      applyPendingSeek(song);
+      // [FIX BUG 4] Set playbackRate on both slots — active slot may be elA or elB
+      const elA = (audioEngine as any).elA as HTMLAudioElement | null;
+      const elB = (audioEngine as any).elB as HTMLAudioElement | null;
+      if (elA) elA.playbackRate = playbackSpeed;
+      if (elB) elB.playbackRate = playbackSpeed;
       addToHistory(song.id);
       setTimeout(() => { playDurationRef.current = audioEngine.duration; }, 500);
     } catch {
@@ -397,6 +446,10 @@ useEffect(() => {
       toastError("Failed to play track");
     }
   }, [playbackSpeed]);
+
+  usePlaybackPersist({
+    isLibraryReady: !isLoading && songs.length > 0,
+  });
 
   const maybeRecordPlay = useCallback(async (song: Song) => {
     if (playCountedRef.current) return;
@@ -449,9 +502,19 @@ useEffect(() => {
       return;
     }
     const result = nextTrack();
-    if (result) playSong(result.song);
-    else { setIsPlaying(false); audioEngine.stop(); }
-  }, [nextTrack, playSong, shouldPauseAfterSong, currentSong, maybeRecordPlay]);
+    if (result) {
+      playSong(result.song);
+      return;
+    }
+    const { queueEndBehavior } = useSettingsStore.getState() as any;
+    const { playContext, contextName } = usePlayerStore.getState();
+    if (queueEndBehavior === "loop" && playContext.length > 0) {
+      playList(playContext, 0, contextName || "Queue");
+      return;
+    }
+    setIsPlaying(false);
+    audioEngine.stop();
+  }, [nextTrack, playSong, shouldPauseAfterSong, currentSong, maybeRecordPlay, playList]);
 
   handleNextRef.current = handleNext;
 
@@ -467,8 +530,16 @@ useEffect(() => {
     if (!currentSong) return;
     if (isPlaying) { audioEngine.pause(); setIsPlaying(false); }
     else {
+      const { fadeInOnResume, fadeInDuration } = useSettingsStore.getState() as any;
       if (!audioEngine.duration) await playSong(currentSong);
-      else { audioEngine.resume(); setIsPlaying(true); }
+      else {
+        if (fadeInOnResume) {
+          audioEngine.fadeIn(fadeInDuration ?? 0.5);
+        } else {
+          audioEngine.resume();
+        }
+        setIsPlaying(true);
+      }
     }
   }, [isPlaying, currentSong, playSong]);
 
@@ -485,10 +556,11 @@ useEffect(() => {
 
   const handleScanFolder = useCallback(async () => {
     toastInfo("Starting folder scan…");
+    const { excludeFolders } = useSettingsStore.getState();
     try {
       const result = await scanFolder(p => {
         setScanProgress({ ...p, phase: p.done ? "completed" : "scanning" });
-      });
+      }, { excludeFolders });
       const db = await getDb();
       const updated = await getAllSongs(db);
       setSongs(Array.isArray(updated) ? updated : []);
@@ -504,10 +576,11 @@ useEffect(() => {
   }, []);
 
   const handleAddFiles = useCallback(async () => {
+    const { excludeFolders } = useSettingsStore.getState();
     try {
       const added = await addFiles(p => {
         setScanProgress({ ...p, phase: p.done ? "completed" : "indexing" });
-      });
+      }, { excludeFolders });
       const db = await getDb();
       const updated = await getAllSongs(db);
       setSongs(Array.isArray(updated) ? updated : []);
@@ -521,7 +594,7 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-    if (!(window as any).__TAURI_INTERNALS__) return;
+    if (!(window as any).__TAURI_INTERNALS__) return () => {};
     let unlisten: (() => void) | null = null;
     (async () => {
       try {
@@ -530,14 +603,23 @@ useEffect(() => {
           setIsDragOver(false);
           const paths: string[] = event.payload?.paths ?? event.payload ?? [];
           if (!paths.length) return;
+
           toastInfo(`Adding ${paths.length} file(s)…`);
+          const { excludeFolders } = useSettingsStore.getState();
+
           try {
+            await importPaths(paths, p => {
+              setScanProgress({ ...p, phase: p.done ? "completed" : "indexing" });
+            }, { excludeFolders });
+
             const db = await getDb();
-            const updated2 = await getAllSongs(db);
-            setSongs(Array.isArray(updated2) ? updated2 : []);
-            toastInfo("Library refreshed");
+            const updated = await getAllSongs(db);
+            setSongs(Array.isArray(updated) ? updated : []);
+            setScanProgress(null);
+            toastSuccess("Files added to library");
           } catch {
             toastError("Failed to add dropped files");
+            setScanProgress(null);
           }
         });
         await tauriListen("tauri://file-drop-hover", () => setIsDragOver(true));
@@ -555,22 +637,26 @@ useEffect(() => {
 
   useMiniPlayerCommands({ onPlayPause: handlePlayPause, onNext: handleNext, onPrev: handlePrev });
 
-  useEffect(() => {
-    const uns: (() => void)[] = [];
-    if (!(window as any).__TAURI_INTERNALS__) return;
-    (async () => {
-      uns.push(await listen("media:playpause", handlePlayPause));
-      uns.push(await listen("media:next", handleNext));
-      uns.push(await listen("media:prev", handlePrev));
-    })();
-    return () => uns.forEach(f => f());
-  }, [handlePlayPause, handleNext, handlePrev]);
+useEffect(() => {
+  if (!(window as any).__TAURI_INTERNALS__) return () => {};
+
+  const uns: (() => void)[] = [];
+
+  (async () => {
+    uns.push(await listen("media:playpause", handlePlayPause));
+    uns.push(await listen("media:next", handleNext));
+    uns.push(await listen("media:prev", handlePrev));
+  })();
+
+  return () => uns.forEach(f => f());
+}, [handlePlayPause, handleNext, handlePrev]);
 
   useKeyboardShortcuts({
-    onPlayPause: handlePlayPause,
-    onNext: handleNext,
-    onPrev: handlePrev,
-    onToggleShuffle: () => {
+  onPlayPause: handlePlayPause,
+  onNext: handleNext,
+  onPrev: handlePrev,
+  onRating: (songId: number, stars: number) => handleRating(songId, stars),
+  onToggleShuffle: () => {
       cycleShuffleMode();
       const { shuffleMode: ns } = usePlayerStore.getState();
       const labels: Record<string, string> = {
@@ -587,7 +673,6 @@ useEffect(() => {
       switchTab("library");
       setTimeout(() => searchInputRef.current?.focus(), 50);
     },
-    onToggleCheatsheet: () => setShowCheatsheet(s => !s),
   });
 
   // ── Loading screen ──────────────────────────────────────────────────────────
@@ -771,6 +856,8 @@ useEffect(() => {
         preloadState={preloadState}
         playbackSpeed={playbackSpeed}
         onSpeedChange={setPlaybackSpeed}
+        sleepTimer={sleepTimer}
+        onClearSleepTimer={clearSleep}
       />
     </div>
   );

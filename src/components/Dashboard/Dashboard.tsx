@@ -329,7 +329,7 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
                   onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
                   onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
                 >
-                  <CoverArt id={song.id} coverArt={song.cover_art} size={130}
+                  <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={130}
                     style={{ width: "100%", height: 130, borderRadius: 0 }} />
                   <div style={{ padding: "7px 9px 8px" }}>
                     <div style={{
@@ -725,7 +725,7 @@ function TrackRow({ song, rank, onPlay, onContextMenu, onRating, suffix, isLast 
       }}>
         {rank}
       </span>
-      <CoverArt id={song.id} coverArt={song.cover_art} size={32} />
+      <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={32} />
       <div style={{ flex: 1, overflow: "hidden" }}>
         <div style={{ fontWeight: 500, fontSize: 12, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {song.title}

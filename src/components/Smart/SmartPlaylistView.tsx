@@ -252,7 +252,7 @@ export default function SmartPlaylistView({ onPlay }: Props) {
                     }}>
                       {i + 1}
                     </span>
-                    <CoverArt id={song.id} coverArt={song.cover_art} size={36} />
+                    <CoverArt id={song.id} coverArt={song.cover_art} hasCover={song.has_cover} size={36} />
                     <div style={{ flex: 1, overflow: "hidden" }}>
                       <div style={{
                         fontWeight: 500, fontSize: 13,

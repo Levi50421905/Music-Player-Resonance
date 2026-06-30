@@ -165,10 +165,14 @@ interface ConfirmDeleteProps {
   songs: Song[];
   onConfirm: () => void;
   onCancel: () => void;
+  /** "library" (default) = hapus dari library permanen. "playlist" = hapus dari playlist saja. */
+  variant?: "library" | "playlist";
 }
 
-export function ConfirmDeleteModal({ songs, onConfirm, onCancel }: ConfirmDeleteProps) {
+export function ConfirmDeleteModal({ songs, onConfirm, onCancel, variant = "library" }: ConfirmDeleteProps) {
   const [step, setStep] = React.useState(1);
+
+  const isPlaylist = variant === "playlist";
 
   return (
     <div
@@ -203,13 +207,16 @@ export function ConfirmDeleteModal({ songs, onConfirm, onCancel }: ConfirmDelete
               <TrashIcon />
             </div>
             <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8, color: "var(--text-primary)" }}>
-              Hapus dari library?
+              {isPlaylist ? "Hapus dari playlist?" : "Hapus dari library?"}
             </h3>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 5, lineHeight: 1.6 }}>
-              <strong style={{ color: "var(--text-primary)" }}>{songs.length} lagu</strong> akan dihapus dari library.
+              <strong style={{ color: "var(--text-primary)" }}>{songs.length} lagu</strong>{" "}
+              {isPlaylist ? "akan dihapus dari playlist ini." : "akan dihapus dari library."}
             </p>
             <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 20 }}>
-              File audio di disk tidak terpengaruh. Kamu bisa undo.
+              {isPlaylist
+                ? "Lagu tidak dihapus dari library. Tindakan ini tidak bisa diurungkan."
+                : "File audio di disk tidak terpengaruh. Kamu bisa undo."}
             </p>
             <div style={{ display: "flex", gap: 9, justifyContent: "center" }}>
               <button onClick={onCancel} style={{
@@ -217,11 +224,11 @@ export function ConfirmDeleteModal({ songs, onConfirm, onCancel }: ConfirmDelete
                 background: "transparent", border: "1px solid var(--border-medium)",
                 color: "var(--text-secondary)", cursor: "pointer", fontFamily: "inherit",
               }}>Batal</button>
-              <button onClick={() => setStep(2)} style={{
+              <button onClick={() => isPlaylist ? onConfirm() : setStep(2)} style={{
                 padding: "7px 20px", borderRadius: "var(--radius-md, 8px)", fontSize: 13,
                 background: "var(--danger-dim, rgba(239,68,68,0.2))", border: "1px solid rgba(239,68,68,0.5)",
                 color: "#f87171", cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
-              }}>Lanjutkan →</button>
+              }}>{isPlaylist ? "Hapus dari playlist" : "Lanjutkan →"}</button>
             </div>
           </>
         ) : (

@@ -764,20 +764,28 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
       const db = await getDb();
       const allSongs = await getAllSongs(db);
       let removed = 0;
+      let errors = 0;
+      const { exists } = await import("@tauri-apps/plugin-fs");
       for (const song of allSongs) {
         try {
-          const { exists } = await import("@tauri-apps/plugin-fs");
-          if (!(await exists(song.path))) {
+          const found = await exists(song.path);
+          if (!found) {
             await db.execute("DELETE FROM songs WHERE id = $1", [song.id]);
             removed++;
           }
-        } catch {}
+        } catch (err) {
+          errors++;
+          console.warn("[Settings] Could not verify file:", song.path, err);
+        }
       }
       if (removed > 0) {
         const updated = await getAllSongs(db);
         setSongs(Array.isArray(updated) ? updated : []);
       }
-      showFeedback(removed > 0 ? `${removed} missing entries removed` : "All files present", "success");
+      const msg = errors > 0
+        ? `${removed} missing entries removed (${errors} could not be checked)`
+        : removed > 0 ? `${removed} missing entries removed` : "All files present";
+      showFeedback(msg, removed > 0 || errors === 0 ? "success" : "error");
     } catch { showFeedback("Failed to check files.", "error"); } finally { setCleaningMissing(false); }
   }, [setSongs, showFeedback]);
 
@@ -1058,7 +1066,12 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                         ["circle",  lang === "id" ? "Lingkaran" : "Circle", 999],
                       ] as const).map(([val, label, radius]) => (
                         <div key={val} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
-                          <button onClick={() => setCoverArtStyle(val)} style={{
+                          <button onClick={() => {
+                            setCoverArtStyle(val);
+                            const root = document.documentElement;
+                            root.classList.remove("cover-square", "cover-rounded", "cover-circle");
+                            root.classList.add(`cover-${val}`);
+                          }} style={{
                             width: 44, height: 44,
                             borderRadius: radius === 999 ? "50%" : `${radius}px`,
                             background: "linear-gradient(135deg, var(--accent), #EC4899)",
@@ -1144,7 +1157,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     label={lang === "id" ? "Mono downmix" : "Mono downmix"}
                     desc={lang === "id" ? "Gabung stereo → mono (untuk earphone satu sisi)" : "Merge stereo → mono (for single earphone use)"}
                     checked={!!monoDownmix}
-                    onChange={v => setMonoDownmix(v)}
+                    onChange={v => { setMonoDownmix(v); audioEngine.setMonoDownmix(v); }}
                     last
                   />
                 </SettingCard>
@@ -1187,7 +1200,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     label={lang === "id" ? "Pemutaran tanpa jeda" : "Gapless playback"}
                     desc={lang === "id" ? "Tidak ada jeda antar lagu" : "No gap between tracks"}
                     checked={gaplessEnabled !== false}
-                    onChange={setGaplessEnabled}
+                    onChange={v => { setGaplessEnabled(v); audioEngine.setGaplessEnabled(v); }}
                     last
                   />
                 </SettingCard>
@@ -1209,7 +1222,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                           { value: "auto",  label: lang === "id" ? "Otomatis" : "Auto" },
                         ]}
                         value={replayGainMode ?? "track"}
-                        onChange={v => setReplayGainMode(v)}
+                        onChange={v => { setReplayGainMode(v); audioEngine.setReplayGainMode(v); }}
                       />
                     </SettingRow>
                   )}
@@ -1227,6 +1240,13 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                       value={queueEndBehavior ?? "stop"}
                       onChange={v => setQueueEndBehavior(v)}
                     />
+                    {queueEndBehavior === "loop" && (
+                      <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                        {lang === "id"
+                          ? "Antrian akan diulang dari awal saat semua lagu selesai."
+                          : "Queue restarts from the beginning when all tracks finish."}
+                      </p>
+                    )}
                   </SettingRow>
                   <SettingRow
                     label={`${lang === "id" ? "Ambang play count" : "Play count threshold"} — ${playCountThreshold ?? 70}%`}
@@ -1243,6 +1263,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                       options={[
                         { value: "play",  label: lang === "id" ? "▶ Putar Sekarang" : "▶ Play Now" },
                         { value: "queue", label: lang === "id" ? "+ Tambah ke Antrian" : "+ Add to Queue" },
+                        { value: "play_next", label: lang === "id" ? "⏭ Putar Berikutnya" : "⏭ Play Next" },
                       ]}
                       value={doubleClickAction ?? "play"}
                       onChange={v => setDoubleClickAction?.(v)}
