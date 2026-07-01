@@ -11,8 +11,9 @@
 use std::path::{Path, PathBuf};
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
-use tauri::{Manager, Emitter};
+use tauri::{Manager, Emitter, WindowEvent};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::Semaphore;
@@ -21,6 +22,9 @@ use tokio::sync::Mutex as AsyncMutex;
 
 // Semaphore decode yang benar-benar shared
 static DECODE_SEM: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
+
+// Synced from frontend settings (closeToTray)
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
 async fn decode_semaphore() -> Arc<Semaphore> {
     DECODE_SEM
@@ -117,9 +121,30 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            let app_handle = app.handle().clone();
+            if let Some(main_win) = app.get_webview_window("main") {
+                main_win.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        if CLOSE_TO_TRAY.load(Ordering::Relaxed) {
+                            api.prevent_close();
+                            if let Some(w) = app_handle.get_webview_window("main") {
+                                let _ = w.hide();
+                            }
+                        } else {
+                            if let Some(mini) = app_handle.get_webview_window("mini") {
+                                let _ = mini.close();
+                            }
+                            app_handle.exit(0);
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_close_to_tray,
+            quit_app,
             get_app_version,
             get_exe_dir,
             read_file_prefix,
@@ -283,6 +308,21 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> 
         }
     }
     Ok(())
+}
+
+// ─── App lifecycle ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn set_close_to_tray(enabled: bool) {
+    CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    if let Some(mini) = app.get_webview_window("mini") {
+        let _ = mini.close();
+    }
+    app.exit(0);
 }
 
 // ─── Commands (sama seperti sebelumnya) ───────────────────────────────────────

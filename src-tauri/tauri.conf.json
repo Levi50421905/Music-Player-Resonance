@@ -83,7 +83,8 @@
         "displayLanguageSelector": false,
         "installMode": "currentUser",
         "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sonarixside.bmp"
+        "sidebarImage": "installer/sonarixside.bmp",
+        "installerHooks": "./windows/hooks.nsh"
       }
     }
   },

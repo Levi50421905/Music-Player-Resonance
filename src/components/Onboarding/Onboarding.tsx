@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { scanFolder, scanOptionsFromSettings } from "../../lib/scanner";
+import { restoreLibraryDbAndReload } from "../../lib/backupRestore";
 import { useSettingsStore } from "../../store";
 import { getDb, setSetting, getAllSongs } from "../../lib/db";
 import type { Song } from "../../lib/db";
@@ -42,6 +43,7 @@ export default function Onboarding({ onComplete }: Props) {
   const [songs, setSongs] = useState<Song[]>([]);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0, file: "" });
   const [mounted, setMounted] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50);
@@ -63,6 +65,15 @@ export default function Onboarding({ onComplete }: Props) {
     const allSongs = await getAllSongs(db);
     onComplete(Array.isArray(allSongs) ? allSongs : []);
   }, [onComplete]);
+
+  const handleRestore = useCallback(async () => {
+    setRestoring(true);
+    try {
+      await restoreLibraryDbAndReload();
+    } finally {
+      setRestoring(false);
+    }
+  }, []);
 
   return (
     <div style={{
@@ -107,7 +118,13 @@ export default function Onboarding({ onComplete }: Props) {
 
         {/* Step content */}
         <div style={{ padding: "32px 40px 40px" }}>
-          {step === "welcome" && <StepWelcome onNext={() => setStep("pick")} />}
+          {step === "welcome" && (
+            <StepWelcome
+              onNext={() => setStep("pick")}
+              onRestore={handleRestore}
+              restoring={restoring}
+            />
+          )}
           {step === "pick"    && <StepPick onScan={handleScan} />}
           {step === "scan"    && <StepScan progress={scanProgress} />}
           {step === "done"    && <StepDone songs={songs} onFinish={handleFinish} />}
@@ -118,7 +135,15 @@ export default function Onboarding({ onComplete }: Props) {
 }
 
 // ── Step 1: Welcome ───────────────────────────────────────────────────────────
-function StepWelcome({ onNext }: { onNext: () => void }) {
+function StepWelcome({
+  onNext,
+  onRestore,
+  restoring,
+}: {
+  onNext: () => void;
+  onRestore: () => void;
+  restoring: boolean;
+}) {
   const [logoVisible, setLogoVisible] = useState(false);
 
   useEffect(() => {
@@ -184,6 +209,13 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
           <polyline points="12 5 19 12 12 19"/>
         </svg>
       </button>
+
+      <button onClick={onRestore} disabled={restoring} style={secondaryBtn}>
+        {restoring ? "Memulihkan backup..." : "Pulihkan dari Backup (.db)"}
+      </button>
+      <p style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 8, lineHeight: 1.5 }}>
+        Punya backup library? Pilih file <strong>sonarix-backup-*.db</strong> dari Settings sebelumnya.
+      </p>
     </div>
   );
 }
@@ -391,6 +423,20 @@ const primaryBtn: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   gap: 8,
+};
+
+const secondaryBtn: React.CSSProperties = {
+  marginTop: 12,
+  width: "100%",
+  padding: "11px",
+  borderRadius: "var(--radius-lg)",
+  fontSize: 13,
+  fontWeight: 500,
+  background: "var(--bg-muted)",
+  border: "1px solid var(--border)",
+  color: "var(--text-secondary)",
+  cursor: "pointer",
+  fontFamily: "inherit",
 };
 
 // ── Background orbs ───────────────────────────────────────────────────────────

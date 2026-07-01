@@ -43,6 +43,16 @@ export async function restoreLibraryDb(): Promise<boolean> {
   }
 }
 
+/** Restore backup then reload app so the new DB is loaded cleanly. */
+export async function restoreLibraryDbAndReload(): Promise<boolean> {
+  const ok = await restoreLibraryDb();
+  if (!ok) return false;
+  const { closeDb } = await import("./db");
+  await closeDb();
+  window.location.reload();
+  return true;
+}
+
 export async function exportListeningHistory(
   history: PlayRecord[],
   songs: Song[],

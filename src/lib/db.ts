@@ -93,6 +93,16 @@ export async function getDbPath(): Promise<string> {
   return resolveDbPath();
 }
 
+export async function closeDb(): Promise<void> {
+  if (!_db) return;
+  try {
+    await _db.close();
+  } catch (err) {
+    console.warn("[DB] close failed:", err);
+  }
+  _db = null;
+}
+
 async function migrate(db: Database) {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS songs (

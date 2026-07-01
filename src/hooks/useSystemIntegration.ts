@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "../store";
 
 interface Handlers {
@@ -20,20 +21,12 @@ export function useSystemIntegration(handlers: Handlers) {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
-  // Close → hide to tray
+  // Sync close-to-tray preference with Rust (handles window X button)
   useEffect(() => {
-    if (!isTauri() || !closeToTray) return;
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        unlisten = await getCurrentWindow().onCloseRequested(async (e) => {
-          e.preventDefault();
-          await getCurrentWindow().hide();
-        });
-      } catch { /* non-tauri */ }
-    })();
-    return () => { unlisten?.(); };
+    if (!isTauri()) return;
+    invoke("set_close_to_tray", { enabled: closeToTray }).catch((err) => {
+      console.warn("[SystemIntegration] set_close_to_tray:", err);
+    });
   }, [closeToTray]);
 
   // Start with Windows
