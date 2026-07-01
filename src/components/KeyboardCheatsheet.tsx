@@ -48,6 +48,8 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ["F"],        action: "Focus search" },
       { keys: ["Ctrl","M"], action: "Mini player" },
       { keys: ["Ctrl","L"], action: "Toggle lyrics" },
+      { keys: ["Ctrl","K"], action: "Command palette / search" },
+      { keys: ["Ctrl","Q"], action: "Toggle queue panel" },
       { keys: ["Ctrl",","], action: "Open settings" },
       { keys: ["?"],        action: "This cheatsheet" },
     ],

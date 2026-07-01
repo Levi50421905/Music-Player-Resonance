@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Malam-malam Ngulik Player Sendiri — Sonarix</title>
+  <style>
+    :root { --text: #1a1a2e; --muted: #5c5c7a; --accent: #7c3aed; --bg: #f5f3ff; }
+    body { font-family: Georgia, "Times New Roman", serif; line-height: 1.75; color: var(--text); background: var(--bg); margin: 0; padding: 2rem 1rem 4rem; }
+    article { max-width: 640px; margin: 0 auto; }
+    h1 { font-family: "Segoe UI", sans-serif; font-size: 1.65rem; letter-spacing: -0.02em; line-height: 1.25; }
+    .subtitle { font-family: sans-serif; color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+    p { margin: 1rem 0; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0; }
+    em { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <article>
+    <h1>Malam-malam Ngulik Player Sendiri: Sonarix</h1>
+    <p class="subtitle"><em>Catatan development — bukan dokumentasi teknis.</em></p>
+
+    <p>Awalnya sederhana banget: “Pengen app musik lokal yang UI-nya nggak bikin ngantuk.” Itu aja. Nggak ada pitch deck. Cuma frustrasi kecil setiap kali buka folder Music dan harus scroll file satu-satu.</p>
+
+    <hr />
+
+    <p>Versi awal cuma list + play. Boring, tapi cukup buat ngetes: <em>apakah saya betah pakai ini sendiri?</em> Jawabannya belum — sampai ada library scan, queue, dan player bar yang stabil.</p>
+
+    <p>Hal yang paling terasa “wow” bukan fitur fancy. Saat shuffle playlist kecil habis, app lanjut random tanpa saya pilih lagu lagi. Baru kerasa kayak player, bukan file browser. Itu auto-mix di v1.2.3.</p>
+
+    <hr />
+
+    <p>Fullscreen sempat cuma satu baris lirik. Cantik di screenshot, useless pas dipakai. Harus self-contained: lirik scroll, volume, shuffle, repeat — karena player bar ketutup overlay.</p>
+
+    <p>Duplikat juga klasik: kolom DB ada, UI belum. Baru keliatan setelah badge + filter tab. Bookmark? localStorage. Hilang ganti browser. Malu sendiri, pindah SQLite.</p>
+
+    <hr />
+
+    <p>Dependency autostart sempat kehapus pas nambah crate baru. Build error. Lesson: jangan edit Cargo.toml sambil multitask.</p>
+
+    <p>Splash screen agak vanity, tapi nutup jeda blank pas load library. Icon Sonarix + animasi ring — identitas visual sebelum React boot.</p>
+
+    <hr />
+
+    <p>Milestone bukan fitur paling banyak. Saat buka app pagi-pagi, shuffle album, fullscreen lirik jalan, nggak kepikiran buka app lain. Itu bar-nya.</p>
+
+    <p>Sonarix masih jauh dari perfect. Tapi setiap patch kecil rasanya seperti merapikan meja kerja sendiri. Bukan untuk demo. Untuk dipakai.</p>
+
+    <p><em>→ Dokumentasi fitur & setup: sonarix-documentation.md</em></p>
+  </article>
+</body>
+</html>

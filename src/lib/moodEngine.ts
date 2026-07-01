@@ -4,6 +4,7 @@
 
 import type { Song, PlayRecord } from "./db";
 import { generateSmartQueue } from "./smartShuffle";
+import { getLang, getMoodTimeLabels, type Lang } from "./i18n";
 
 export type TimeSlot =
   | "early_morning" | "morning" | "afternoon"
@@ -37,20 +38,11 @@ function getTimeSlot(hour: number): TimeSlot {
   return "late_night";
 }
 
-const TIME_LABELS: Record<TimeSlot, { label: string; desc: string; color: string }> = {
-  early_morning: { label: "Early Morning", desc: "Soft & gentle start", color: "#F59E0B" },
-  morning:       { label: "Morning Boost", desc: "Upbeat energy to start the day", color: "#10B981" },
-  afternoon:     { label: "Afternoon Flow", desc: "Balanced tempo for focus", color: "#3B82F6" },
-  evening:       { label: "Evening Wind-down", desc: "Relaxed after work", color: "#8B5CF6" },
-  night:         { label: "Night Session", desc: "Mellow & immersive", color: "#6366F1" },
-  late_night:    { label: "Late Night", desc: "Slow, ambient, deep", color: "#4F46E5" },
-};
-
-export function detectMoodContext(now = new Date()): MoodContext {
+export function detectMoodContext(now = new Date(), lang: Lang = getLang()): MoodContext {
   const hour = now.getHours();
   const dayOfWeek = now.getDay();
   const slot = getTimeSlot(hour);
-  const meta = TIME_LABELS[slot];
+  const meta = getMoodTimeLabels(lang)[slot];
   return {
     timeSlot: slot,
     dayOfWeek,
@@ -300,7 +292,6 @@ export function buildSessionContinuation(
   return { songs: result.slice(0, 30), label };
 }
 
-/** Saved queue position for auto-resume on startup. */
 export function getResumeQueueInfo(): { songTitle: string; queueRemaining: number; contextName: string } | null {
   try {
     const raw = localStorage.getItem("sonarix-player-v1");
@@ -318,4 +309,68 @@ export function getResumeQueueInfo(): { songTitle: string; queueRemaining: numbe
   } catch {
     return null;
   }
+}
+
+export interface ListeningInsight {
+  topGenreAtHour: string;
+  topArtistWeek: string;
+  peakHour: string;
+  playsThisWeek: number;
+}
+
+export function buildListeningInsights(
+  history: PlayRecord[],
+  songs: Song[],
+): ListeningInsight | null {
+  if (history.length === 0 || songs.length === 0) return null;
+  const byId = new Map(songs.map(s => [s.id, s]));
+  const hour = new Date().getHours();
+
+  const hourPlays = history.filter(h => new Date(h.played_at).getHours() === hour);
+  const genreCount = new Map<string, number>();
+  for (const h of hourPlays) {
+    const g = byId.get(h.song_id)?.genre ?? "Unknown";
+    genreCount.set(g, (genreCount.get(g) ?? 0) + 1);
+  }
+  const topGenreAtHour = [...genreCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
+
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const weekPlays = history.filter(h => new Date(h.played_at).getTime() >= weekAgo);
+  const artistCount = new Map<string, number>();
+  for (const h of weekPlays) {
+    const a = byId.get(h.song_id)?.artist ?? "Unknown";
+    artistCount.set(a, (artistCount.get(a) ?? 0) + 1);
+  }
+  const topArtistWeek = [...artistCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
+
+  const hourCounts = new Array(24).fill(0);
+  for (const h of history) hourCounts[new Date(h.played_at).getHours()]++;
+  const peak = hourCounts.indexOf(Math.max(...hourCounts));
+  const peakHour = `${peak}:00`;
+
+  return {
+    topGenreAtHour,
+    topArtistWeek,
+    peakHour,
+    playsThisWeek: weekPlays.length,
+  };
+}
+
+/** Combine multiple mood categories into one mixed playlist. */
+export function buildMixFromMoods(
+  moodIds: string[],
+  songs: Song[],
+  ctx: MoodContext,
+  maxTracks = 40,
+): Song[] {
+  const picked = new Map<number, Song>();
+  for (const id of moodIds) {
+    const mood = MOOD_CATEGORIES.find(m => m.id === id);
+    if (!mood) continue;
+    for (const s of generateMoodPlaylist(mood, songs, ctx)) {
+      picked.set(s.id, s);
+      if (picked.size >= maxTracks) break;
+    }
+  }
+  return [...picked.values()].sort(() => Math.random() - 0.5);
 }

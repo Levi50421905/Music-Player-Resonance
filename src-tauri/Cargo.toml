@@ -1,6 +1,6 @@
 [package]
 name = "sonarix"
-version = "1.1.1"
+version = "1.2.3"
 edition = "2021"
 
 [lib]
@@ -15,7 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri               = { version = "2", features = ["protocol-asset", "webview-data-url"] }
+tauri               = { version = "2", features = ["protocol-asset", "webview-data-url", "tray-icon"] }
 tauri-plugin-fs     = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell  = "2"
@@ -28,3 +28,6 @@ hound               = "3"
 base64              = "0.22"
 # [#19] Async background decode queue
 tokio               = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros"] }
+lofty               = "0.22"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-global-shortcut = "2.3.2"

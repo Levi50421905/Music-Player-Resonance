@@ -9,7 +9,8 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { scanFolder } from "../../lib/scanner";
+import { scanFolder, scanOptionsFromSettings } from "../../lib/scanner";
+import { useSettingsStore } from "../../store";
 import { getDb, setSetting, getAllSongs } from "../../lib/db";
 import type { Song } from "../../lib/db";
 
@@ -52,7 +53,7 @@ export default function Onboarding({ onComplete }: Props) {
     const result = await scanFolder((p) => {
       setScanProgress({ current: p.current, total: p.total, file: p.currentFile });
       if (p.done) setStep("done");
-    });
+    }, scanOptionsFromSettings(useSettingsStore.getState() as any));
     setSongs(result.songs);
   }, []);
 

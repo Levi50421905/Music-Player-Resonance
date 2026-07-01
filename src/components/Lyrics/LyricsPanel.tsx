@@ -9,6 +9,8 @@
 import { useEffect, useState, useRef } from "react";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { parseLrc, getActiveLine, getLrcPath, type ParsedLrc } from "../../lib/lrcParser";
+import { setLyricCache, clearLyricCache } from "../../lib/lyricCache";
+import { cacheLyricsOffline } from "../../lib/lyricLoader";
 import { useSettingsStore } from "../../store";
 
 interface Props {
@@ -186,7 +188,7 @@ export default function LyricsPanel({ songPath, currentTime, songTitle, songArti
   const activeRef  = useRef<HTMLDivElement>(null);
   const prevSongRef = useRef<string>("");
 
-  const { autoFetchLyrics, lyricsSource } = useSettingsStore() as any;
+  const { autoFetchLyrics, lyricsSource, lyricsOfflineCache } = useSettingsStore() as any;
 
   useEffect(() => {
     if (!songPath || songPath === prevSongRef.current) return;
@@ -204,8 +206,10 @@ export default function LyricsPanel({ songPath, currentTime, songTitle, songArti
         const content = await readTextFile(lrcPath);
         const parsed  = parseLrc(content);
         if (parsed.lines.length > 0) {
-          setLyrics(sanitizeParsedLrc(parsed));
+          const sanitized = sanitizeParsedLrc(parsed);
+          setLyrics(sanitized);
           setSource("local");
+          if (lyricsOfflineCache) cacheLyricsOffline(songPath, sanitized.lines);
           setLoading(false);
           return;
         }
@@ -254,6 +258,7 @@ export default function LyricsPanel({ songPath, currentTime, songTitle, songArti
         onlineLyricsCache.set(cacheKey, fetched);
         setLyrics(fetched);
         setSource(fetchedFrom);
+        if (lyricsOfflineCache) cacheLyricsOffline(songPath, fetched.lines);
       } else {
         onlineLyricsCache.set(cacheKey, "not_found");
         setSource("not_found");
@@ -261,7 +266,7 @@ export default function LyricsPanel({ songPath, currentTime, songTitle, songArti
 
       setLoading(false);
     })();
-  }, [songPath, songTitle, songArtist, autoFetchLyrics, lyricsSource]);
+  }, [songPath, songTitle, songArtist, autoFetchLyrics, lyricsSource, lyricsOfflineCache]);
 
   const activeLine = lyrics ? getActiveLine(lyrics.lines, currentTime) : -1;
 
@@ -272,6 +277,12 @@ export default function LyricsPanel({ songPath, currentTime, songTitle, songArti
       block: "center",
     });
   }, [activeLine]);
+
+  useEffect(() => {
+    if (!songPath) return;
+    if (lyrics?.lines?.length) setLyricCache(songPath, lyrics.lines);
+    else clearLyricCache(songPath);
+  }, [songPath, lyrics]);
 
   // ── Render states ─────────────────────────────────────────────────────────
 

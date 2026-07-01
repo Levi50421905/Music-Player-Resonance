@@ -846,6 +846,8 @@ interface SettingsState {
   fadeInOnResume: boolean;
   fadeInDuration: number;
   queueEndBehavior: "stop" | "loop" | "radio";
+  /** When repeat is off and queue exhausted, play random from library without adding to queue */
+  autoMixOnQueueEnd: boolean;
   outputDeviceId: string;
   monoDownmix: boolean;
   fontSizeScale: number;
@@ -855,6 +857,41 @@ interface SettingsState {
   queuePanelPosition: "right" | "bottom";
   notificationsEnabled: boolean;
   excludeFolders: string[];
+
+  // ── v1.2 extended settings ──
+  defaultShuffleOnStart: boolean;
+  defaultRepeatOnStart: "off" | "all" | "one";
+  skipSilence: boolean;
+  defaultPlaybackSpeed: number;
+  scrobbleThresholdSec: number;
+  preloadDepth: number;
+  resumeBehavior: "auto_play" | "paused";
+  radioSource: "library" | "same_genre" | "same_artist" | "smart" | "smart_mood";
+  radioSmartEnabled: boolean;
+  scanFollowSymlinks: boolean;
+  autoUnblockFiles: boolean;
+  duplicateHandling: "skip" | "mark" | "allow";
+  excludeExtensions: string[];
+  metadataLangPriority: "auto" | "en" | "ja" | "id";
+  waveformDefaultStyle: "bars" | "mirror" | "line" | "progress";
+  playerBarCompact: boolean;
+  dynamicThemeFromCover: boolean;
+  hiddenTabs: string[];
+  lyricsFontSize: number;
+  lyricsOffsetMs: number;
+  lyricsOfflineCache: boolean;
+  globalMediaKeys: boolean;
+  closeToTray: boolean;
+  startWithWindows: boolean;
+  notificationShowCover: boolean;
+  lastfmEnabled: boolean;
+  lastfmApiKey: string;
+  lastfmApiSecret: string;
+  lastfmSessionKey: string;
+  lastfmUsername: string;
+  eqPresetPerMood: boolean;
+  autoPlaylistEnabled: boolean;
+  customKeybinds: Partial<Record<"fullscreen" | "commandPalette" | "toggleQueue", string>>;
 
   lastPlaylistId: number | null;
 
@@ -881,6 +918,7 @@ interface SettingsState {
   setFadeInOnResume: (v: boolean) => void;
   setFadeInDuration: (v: number) => void;
   setQueueEndBehavior: (v: SettingsState["queueEndBehavior"]) => void;
+  setAutoMixOnQueueEnd: (v: boolean) => void;
   setOutputDeviceId: (v: string) => void;
   setMonoDownmix: (v: boolean) => void;
   setFontSizeScale: (v: number) => void;
@@ -893,6 +931,40 @@ interface SettingsState {
   removeExcludeFolder: (path: string) => void;
   setPlayCountThreshold: (v: number) => void;
   setLastPlaylistId: (id: number | null) => void;
+  setDefaultShuffleOnStart: (v: boolean) => void;
+  setDefaultRepeatOnStart: (v: SettingsState["defaultRepeatOnStart"]) => void;
+  setSkipSilence: (v: boolean) => void;
+  setDefaultPlaybackSpeed: (v: number) => void;
+  setScrobbleThresholdSec: (v: number) => void;
+  setPreloadDepth: (v: number) => void;
+  setResumeBehavior: (v: SettingsState["resumeBehavior"]) => void;
+  setRadioSource: (v: SettingsState["radioSource"]) => void;
+  setRadioSmartEnabled: (v: boolean) => void;
+  setScanFollowSymlinks: (v: boolean) => void;
+  setAutoUnblockFiles: (v: boolean) => void;
+  setDuplicateHandling: (v: SettingsState["duplicateHandling"]) => void;
+  setExcludeExtensions: (v: string[]) => void;
+  setMetadataLangPriority: (v: SettingsState["metadataLangPriority"]) => void;
+  setWaveformDefaultStyle: (v: SettingsState["waveformDefaultStyle"]) => void;
+  setPlayerBarCompact: (v: boolean) => void;
+  setDynamicThemeFromCover: (v: boolean) => void;
+  setHiddenTabs: (v: string[]) => void;
+  toggleHiddenTab: (tabId: string) => void;
+  setLyricsFontSize: (v: number) => void;
+  setLyricsOffsetMs: (v: number) => void;
+  setLyricsOfflineCache: (v: boolean) => void;
+  setGlobalMediaKeys: (v: boolean) => void;
+  setCloseToTray: (v: boolean) => void;
+  setStartWithWindows: (v: boolean) => void;
+  setNotificationShowCover: (v: boolean) => void;
+  setLastfmEnabled: (v: boolean) => void;
+  setLastfmApiKey: (v: string) => void;
+  setLastfmApiSecret: (v: string) => void;
+  setLastfmSessionKey: (v: string) => void;
+  setLastfmUsername: (v: string) => void;
+  setEqPresetPerMood: (v: boolean) => void;
+  setAutoPlaylistEnabled: (v: boolean) => void;
+  setCustomKeybind: (action: keyof SettingsState["customKeybinds"], shortcut: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -908,6 +980,7 @@ export const useSettingsStore = create<SettingsState>()(
       fadeInOnResume: false,
       fadeInDuration: 0.5,
       queueEndBehavior: "stop",
+      autoMixOnQueueEnd: true,
       outputDeviceId: "",
       monoDownmix: false,
       fontSizeScale: 1.0,
@@ -917,6 +990,39 @@ export const useSettingsStore = create<SettingsState>()(
       queuePanelPosition: "right",
       notificationsEnabled: true,
       excludeFolders: [],
+      defaultShuffleOnStart: false,
+      defaultRepeatOnStart: "off",
+      skipSilence: false,
+      defaultPlaybackSpeed: 1,
+      scrobbleThresholdSec: 30,
+      preloadDepth: 3,
+      resumeBehavior: "paused",
+      radioSource: "smart_mood",
+      radioSmartEnabled: true,
+      scanFollowSymlinks: false,
+      autoUnblockFiles: true,
+      duplicateHandling: "mark",
+      excludeExtensions: [],
+      metadataLangPriority: "auto",
+      waveformDefaultStyle: "bars",
+      playerBarCompact: false,
+      dynamicThemeFromCover: false,
+      hiddenTabs: [],
+      lyricsFontSize: 14,
+      lyricsOffsetMs: 0,
+      lyricsOfflineCache: true,
+      globalMediaKeys: true,
+      closeToTray: false,
+      startWithWindows: false,
+      notificationShowCover: true,
+      lastfmEnabled: false,
+      lastfmApiKey: "",
+      lastfmApiSecret: "",
+      lastfmSessionKey: "",
+      lastfmUsername: "",
+      eqPresetPerMood: false,
+      autoPlaylistEnabled: true,
+      customKeybinds: {},
       lastPlaylistId: null,
 
       setTheme:            (t) => set({ theme: t }),
@@ -949,6 +1055,7 @@ export const useSettingsStore = create<SettingsState>()(
       setFadeInOnResume:       (v) => set({ fadeInOnResume: v }),
       setFadeInDuration:       (v) => set({ fadeInDuration: Math.max(0.1, Math.min(3.0, v)) }),
       setQueueEndBehavior:     (v) => set({ queueEndBehavior: v }),
+      setAutoMixOnQueueEnd:    (v) => set({ autoMixOnQueueEnd: v }),
       setOutputDeviceId:       (v) => set({ outputDeviceId: v }),
       setMonoDownmix:          (v) => set({ monoDownmix: v }),
       setFontSizeScale:        (v) => set({ fontSizeScale: Math.max(0.8, Math.min(1.4, v)) }),
@@ -966,6 +1073,46 @@ export const useSettingsStore = create<SettingsState>()(
         excludeFolders: s.excludeFolders.filter((f) => f !== path),
       })),
       setLastPlaylistId: (id) => set({ lastPlaylistId: id }),
+      setDefaultShuffleOnStart: (v) => set({ defaultShuffleOnStart: v }),
+      setDefaultRepeatOnStart: (v) => set({ defaultRepeatOnStart: v }),
+      setSkipSilence: (v) => set({ skipSilence: v }),
+      setDefaultPlaybackSpeed: (v) => set({ defaultPlaybackSpeed: Math.max(0.5, Math.min(2, v)) }),
+      setScrobbleThresholdSec: (v) => set({ scrobbleThresholdSec: Math.max(10, Math.min(240, v)) }),
+      setPreloadDepth: (v) => set({ preloadDepth: Math.max(0, Math.min(10, v)) }),
+      setResumeBehavior: (v) => set({ resumeBehavior: v }),
+      setRadioSource: (v) => set({ radioSource: v }),
+      setRadioSmartEnabled: (v) => set({ radioSmartEnabled: v }),
+      setScanFollowSymlinks: (v) => set({ scanFollowSymlinks: v }),
+      setAutoUnblockFiles: (v) => set({ autoUnblockFiles: v }),
+      setDuplicateHandling: (v) => set({ duplicateHandling: v }),
+      setExcludeExtensions: (v) => set({ excludeExtensions: v }),
+      setMetadataLangPriority: (v) => set({ metadataLangPriority: v }),
+      setWaveformDefaultStyle: (v) => set({ waveformDefaultStyle: v }),
+      setPlayerBarCompact: (v) => set({ playerBarCompact: v }),
+      setDynamicThemeFromCover: (v) => set({ dynamicThemeFromCover: v }),
+      setHiddenTabs: (v) => set({ hiddenTabs: v }),
+      toggleHiddenTab: (tabId) => set((s) => ({
+        hiddenTabs: s.hiddenTabs.includes(tabId)
+          ? s.hiddenTabs.filter(t => t !== tabId)
+          : [...s.hiddenTabs, tabId],
+      })),
+      setLyricsFontSize: (v) => set({ lyricsFontSize: Math.max(10, Math.min(24, v)) }),
+      setLyricsOffsetMs: (v) => set({ lyricsOffsetMs: Math.max(-5000, Math.min(5000, v)) }),
+      setLyricsOfflineCache: (v) => set({ lyricsOfflineCache: v }),
+      setGlobalMediaKeys: (v) => set({ globalMediaKeys: v }),
+      setCloseToTray: (v) => set({ closeToTray: v }),
+      setStartWithWindows: (v) => set({ startWithWindows: v }),
+      setNotificationShowCover: (v) => set({ notificationShowCover: v }),
+      setLastfmEnabled: (v) => set({ lastfmEnabled: v }),
+      setLastfmApiKey: (v) => set({ lastfmApiKey: v }),
+      setLastfmApiSecret: (v) => set({ lastfmApiSecret: v }),
+      setLastfmSessionKey: (v) => set({ lastfmSessionKey: v }),
+      setLastfmUsername: (v) => set({ lastfmUsername: v }),
+      setEqPresetPerMood: (v) => set({ eqPresetPerMood: v }),
+      setAutoPlaylistEnabled: (v) => set({ autoPlaylistEnabled: v }),
+      setCustomKeybind: (action, shortcut) => set((s) => ({
+        customKeybinds: { ...s.customKeybinds, [action]: shortcut },
+      })),
     }),
     { name: "sonarix-settings" }
   )

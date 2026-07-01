@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef } from "react";
 import type { Song } from "../lib/db";
+import { useLang } from "../lib/i18n";
 
 export interface Playlist {
   id: number;
@@ -24,6 +25,7 @@ interface Props {
   onAddToQueue: (songs: Song[]) => void;
   onAddToPlaylist: (playlistId: number, songs: Song[]) => void;
   onToggleLoved?: (song: Song) => void;   // only shown for single song
+  onEditMetadata?: (song: Song) => void;  // only shown for single song
   onShowInFolder?: (song: Song) => void;  // only shown for single song
   onDelete: (songs: Song[]) => void;
 }
@@ -38,8 +40,9 @@ function clamp(x: number, y: number, w = 230, h = 380) {
 export default function SongContextMenu({
   x, y, songs, playlists,
   onClose, onPlayNow, onPlayNext, onAddToQueue,
-  onAddToPlaylist, onToggleLoved, onShowInFolder, onDelete,
+  onAddToPlaylist, onToggleLoved, onEditMetadata, onShowInFolder, onDelete,
 }: Props) {
+  const { t } = useLang();
   const ref = useRef<HTMLDivElement>(null);
   const [showPlaylistSub, setShowPlaylistSub] = React.useState(false);
   const pos = clamp(x, y);
@@ -86,20 +89,20 @@ export default function SongContextMenu({
           </>
         ) : (
           <p style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light, #a78bfa)" }}>
-            {songs.length} tracks selected
+            {t.tracksSelected(songs.length)}
           </p>
         )}
       </div>
 
-      <Item icon={<PlayIcon />}  label="Putar sekarang"    onClick={() => { onPlayNow(songs);   onClose(); }} />
-      <Item icon={<NextIcon />}  label="Putar berikutnya"  onClick={() => { onPlayNext(songs);  onClose(); }} />
-      <Item icon={<QueueIcon />} label="Tambah ke antrian" onClick={() => { onAddToQueue(songs); onClose(); }} />
+      <Item icon={<PlayIcon />}  label={t.playNow}    onClick={() => { onPlayNow(songs);   onClose(); }} />
+      <Item icon={<NextIcon />}  label={t.playNext}  onClick={() => { onPlayNext(songs);  onClose(); }} />
+      <Item icon={<QueueIcon />} label={t.addToQueue} onClick={() => { onAddToQueue(songs); onClose(); }} />
 
       {/* Add to playlist */}
       <div style={{ position: "relative" }}>
         <Item
           icon={<PlaylistIcon />}
-          label="Tambah ke playlist ›"
+          label={t.addToPlaylistMenu}
           onClick={e => { e.stopPropagation(); setShowPlaylistSub(v => !v); }}
         />
         {showPlaylistSub && (
@@ -136,12 +139,15 @@ export default function SongContextMenu({
         <>
           <div style={{ height: 1, background: "var(--border-subtle)", margin: "4px 0" }} />
           {onShowInFolder && (
-            <Item icon={<FolderIcon />} label="Tampilkan di folder" onClick={() => { onShowInFolder(single); onClose(); }} />
+            <Item icon={<FolderIcon />} label={t.showInFolder} onClick={() => { onShowInFolder(single); onClose(); }} />
+          )}
+          {onEditMetadata && (
+            <Item icon={<span style={{ fontSize: 12 }}>✎</span>} label={t.editMetadata} onClick={() => { onEditMetadata(single); onClose(); }} />
           )}
           {onToggleLoved && (
             <Item
               icon={<span style={{ fontSize: 12 }}>{single.loved ? "💔" : "❤"}</span>}
-              label={single.loved ? "Hapus dari favorit" : "Tambah ke favorit"}
+              label={single.loved ? t.removeFavorite : t.addFavorite}
               onClick={() => { onToggleLoved(single); onClose(); }}
             />
           )}
@@ -151,7 +157,7 @@ export default function SongContextMenu({
       <div style={{ height: 1, background: "var(--border-subtle)", margin: "4px 0" }} />
       <Item
         icon={<TrashIcon />}
-        label={`Hapus dari library${songs.length > 1 ? ` (${songs.length})` : ""}`}
+        label={`${t.deleteFromLibrary}${songs.length > 1 ? ` (${songs.length})` : ""}`}
         danger
         onClick={() => { onDelete(songs); onClose(); }}
       />

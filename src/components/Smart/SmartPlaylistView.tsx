@@ -10,11 +10,16 @@ import {
   detectMoodContext,
   buildSmartMix,
   generateMoodPlaylist,
+  buildMixFromMoods,
   MOOD_CATEGORIES,
   type MoodCategory,
   type MoodContext,
 } from "../../lib/moodEngine";
+import { useSettingsStore } from "../../store";
+import { getEqPresetForHour } from "../../lib/moodEqPresets";
+import { audioEngine } from "../../lib/audioEngine";
 import { generateSmartQueue } from "../../lib/smartShuffle";
+import { useLang } from "../../lib/i18n";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60) | 0).padStart(2, "0")}`;
 
@@ -23,11 +28,13 @@ interface Props {
 }
 
 export default function SmartPlaylistView({ onPlay }: Props) {
+  const { t, lang } = useLang();
   const { songs } = useLibraryStore();
   const { history } = usePlayerStore();
-  const [ctx] = useState<MoodContext>(() => detectMoodContext());
+  const ctx = useMemo(() => detectMoodContext(undefined, lang), [lang]);
   const [selected, setSelected] = useState<MoodCategory | "mix" | null>("mix");
   const [preview, setPreview] = useState<Song[]>([]);
+  const [mixMoodIds, setMixMoodIds] = useState<string[]>([]);
 
   const smartMix = useMemo(
     () => buildSmartMix(songs, history, ctx),
@@ -43,6 +50,39 @@ export default function SmartPlaylistView({ onPlay }: Props) {
   useEffect(() => {
     if (selected === "mix") setPreview(smartMix.songs);
   }, [selected, smartMix.songs]);
+
+  useEffect(() => {
+    const applyMoodEq = () => {
+      const { eqPresetPerMood, setEqGains, setEqPreset } = useSettingsStore.getState() as any;
+      if (!eqPresetPerMood) return;
+      const preset = getEqPresetForHour(new Date().getHours());
+      setEqGains(preset.gains);
+      setEqPreset(preset.name);
+      audioEngine.setEqPreset(preset.gains);
+    };
+    applyMoodEq();
+    const iv = setInterval(applyMoodEq, 60_000);
+    const onVis = () => { if (!document.hidden) applyMoodEq(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  useEffect(() => {
+    const { autoPlaylistEnabled } = useSettingsStore.getState() as any;
+    if (!autoPlaylistEnabled || songs.length === 0) return;
+    const hour = new Date().getHours();
+    const isNight = hour >= 21 || hour < 6;
+    if (!isNight) return;
+    const auto = songs.filter(s =>
+      (s.stars ?? 0) >= 4 && (s.format === "FLAC" || s.format === "ALAC"),
+    );
+    if (auto.length >= 5 && preview.length === 0 && selected === "mix") {
+      setPreview(auto.slice(0, 30));
+    }
+  }, [songs, preview.length, selected]);
 
   const moodStats = useMemo(() =>
     MOOD_CATEGORIES.map(mood => ({
@@ -71,11 +111,11 @@ export default function SmartPlaylistView({ onPlay }: Props) {
       <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column" }}>
         <div style={{ marginBottom: 14 }}>
           <h3 style={{ fontWeight: 700, fontSize: 15, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>
-            Smart & Mood
+            {t.smartMoodTitle}
           </h3>
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3, lineHeight: 1.5 }}>
-            Deteksi otomatis: <strong style={{ color: ctx.color }}>{ctx.label}</strong>
-            {" · "}{ctx.hour}:00{ctx.isWeekend ? " · weekend" : ""}
+            {t.smartDetect} <strong style={{ color: ctx.color }}>{ctx.label}</strong>
+            {" · "}{ctx.hour}:00{ctx.isWeekend ? ` · ${t.weekend}` : ""}
           </p>
         </div>
 
@@ -91,13 +131,53 @@ export default function SmartPlaylistView({ onPlay }: Props) {
           }}
         >
           <span style={{ fontSize: 10, fontWeight: 700, color: smartMix.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            ✦ Rekomendasi Sekarang
+            {t.smartNowRecommend}
           </span>
           <span style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>{smartMix.name}</span>
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{smartMix.songs.length} lagu · smart shuffle</span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{t.smartTracksShuffle(smartMix.songs.length)}</span>
         </button>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
+          <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+            {t.mixBuilder}
+          </p>
+          {MOOD_CATEGORIES.slice(0, 6).map(mood => (
+            <label key={mood.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, cursor: "pointer", padding: "2px 0" }}>
+              <input
+                type="checkbox"
+                checked={mixMoodIds.includes(mood.id)}
+                onChange={() => {
+                  setMixMoodIds(prev => {
+                    const next = prev.includes(mood.id)
+                      ? prev.filter(id => id !== mood.id)
+                      : prev.length < 3 ? [...prev, mood.id] : prev;
+                    if (next.length > 0) {
+                      const mixed = buildMixFromMoods(next, songs, ctx);
+                      setPreview(mixed);
+                      setSelected("mix");
+                    }
+                    return next;
+                  });
+                }}
+                style={{ accentColor: mood.color }}
+              />
+              <span style={{ color: mood.color }}>{mood.name}</span>
+            </label>
+          ))}
+          {mixMoodIds.length >= 2 && (
+            <button onClick={() => {
+              const mixed = buildMixFromMoods(mixMoodIds, songs, ctx);
+              setPreview(mixed);
+              onPlay(mixed, 0);
+            }} style={{
+              marginTop: 6, padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+              background: "var(--accent-dim)", border: "1px solid var(--accent-border)",
+              color: "var(--accent-light)", cursor: "pointer", fontFamily: "inherit",
+            }}>Putar Mix ({mixMoodIds.length} mood)</button>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", marginTop: 12 }}>
           {moodStats.map(({ mood, count }) => (
             <MoodCard
               key={mood.id} mood={mood} count={count}

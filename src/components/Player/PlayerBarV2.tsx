@@ -19,6 +19,8 @@ import StarRating         from "../StarRating";
 import type { ShuffleMode, RepeatMode } from "../../store";
 import { SleepTimerBanner, type SleepTimerState } from "./SleepTimer";
 import AudioQualityBadge from "./AudioQualityBadge";
+import { getBookmarksForSong } from "../../lib/bookmarks";
+import BookmarkPopover from "./BookmarkPopover";
 
 interface Props {
   onPlayPause:    () => void;
@@ -30,6 +32,11 @@ interface Props {
   onSpeedChange?: (s: number) => void;
   sleepTimer?:    SleepTimerState;
   onClearSleepTimer?: () => void;
+  abLoop?: { a: number | null; b: number | null };
+  onSetAbA?: () => void;
+  onSetAbB?: () => void;
+  onClearAb?: () => void;
+  onOpenFullscreen?: () => void;
 }
 
 const fmt = (s: number) => {
@@ -50,6 +57,25 @@ function IconSpeedometer() {
       <line x1="12" y1="12" x2="15.5" y2="8.5"/>
       <circle cx="12" cy="12" r="1.5"/>
     </svg>
+  );
+}
+
+function AbBtn({ label, active, onClick, title }: { label: string; active: boolean; onClick: () => void; title?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        minWidth: 22, height: 22, padding: "0 4px",
+        borderRadius: "var(--radius-sm)",
+        border: `1px solid ${active ? "var(--accent-border)" : "var(--border)"}`,
+        background: active ? "var(--accent-dim)" : "transparent",
+        color: active ? "var(--accent-light)" : "var(--text-faint)",
+        cursor: "pointer", fontSize: 10, fontWeight: 700,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -347,6 +373,8 @@ export default function PlayerBarV2({
   onPlayPause, onNext, onPrev, onRating, preloadState,
   playbackSpeed = 1, onSpeedChange,
   sleepTimer, onClearSleepTimer,
+  abLoop, onSetAbA, onSetAbB, onClearAb,
+  onOpenFullscreen,
 }: Props) {
   const {
     currentSong, isPlaying, progress, currentTime, duration,
@@ -354,10 +382,14 @@ export default function PlayerBarV2({
     setVolume, cycleShuffleMode, cycleRepeatMode,
   } = usePlayerStore();
 
-  const [seekMode, setSeekMode] = useState<"bars" | "mirror" | "line" | "progress">("bars");
+  const { waveformDefaultStyle, playerBarCompact } = useSettingsStore() as any;
+  const [seekMode, setSeekMode] = useState<"bars" | "mirror" | "line" | "progress">(
+    waveformDefaultStyle ?? "bars"
+  );
   const [hoverTime, setHoverTime]     = useState<string | null>(null);
   const [hoverPct, setHoverPct]       = useState(0);
   const [showVolTooltip, setShowVolTooltip] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
   const progressBarRef = useRef<HTMLDivElement>(null);
 
   const handleBarSeek = useCallback((e: React.MouseEvent) => {
@@ -398,6 +430,7 @@ export default function PlayerBarV2({
     }}>
 
       {/* ── Seekbar area ── */}
+      {!playerBarCompact && (
       <div style={{ height: 56, position: "relative" }}>
         {seekMode !== "progress" && currentSong ? (
           <WaveformSeekbar
@@ -463,6 +496,7 @@ export default function PlayerBarV2({
           </div>
         )}
       </div>
+      )}
 
       {/* ── Controls row ── */}
       <div style={{ height: 72, display: "flex", alignItems: "center", padding: "0 18px", gap: 0 }}>
@@ -471,7 +505,18 @@ export default function PlayerBarV2({
         <div style={{ display: "flex", alignItems: "center", gap: 11, width: 250, flexShrink: 0, minWidth: 0 }}>
           {currentSong ? (
             <>
-              <div style={{ position: "relative", flexShrink: 0 }}>
+              {onOpenFullscreen ? (
+              <button
+                type="button"
+                onClick={onOpenFullscreen}
+                title="Now playing fullscreen (Shift+P)"
+                aria-label="Now playing fullscreen"
+                style={{
+                  position: "relative", flexShrink: 0,
+                  padding: 0, border: "none", background: "none", cursor: "pointer",
+                  borderRadius: 8,
+                }}
+              >
                 <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} hasCover={currentSong.has_cover} size={44} />
                 {isPlaying && (
                   <>
@@ -479,17 +524,39 @@ export default function PlayerBarV2({
                       position: "absolute", inset: -2, borderRadius: 8,
                       border: "1.5px solid rgba(124,58,237,0.6)",
                       animation: "ring-pulse 2s ease-in-out infinite",
+                      pointerEvents: "none",
                     }} />
                     <div style={{
                       position: "absolute", inset: -5, borderRadius: 11,
                       border: "1px solid rgba(124,58,237,0.2)",
                       animation: "ring-pulse 2s ease-in-out infinite 0.5s",
+                      pointerEvents: "none",
                     }} />
                   </>
                 )}
+              </button>
+              ) : (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <CoverArt id={currentSong.id} coverArt={currentSong.cover_art} hasCover={currentSong.has_cover} size={44} />
               </div>
+              )}
               <div style={{ overflow: "hidden", flex: 1, minWidth: 0 }}>
-                <MarqueeTitle text={currentSong.title} isPlaying={isPlaying} />
+                {onOpenFullscreen ? (
+                  <button
+                    type="button"
+                    onClick={onOpenFullscreen}
+                    title="Now playing fullscreen (Shift+P)"
+                    aria-label="Now playing fullscreen"
+                    style={{
+                      display: "block", width: "100%", padding: 0, margin: 0,
+                      border: "none", background: "none", cursor: "pointer", textAlign: "left",
+                    }}
+                  >
+                    <MarqueeTitle text={currentSong.title} isPlaying={isPlaying} />
+                  </button>
+                ) : (
+                  <MarqueeTitle text={currentSong.title} isPlaying={isPlaying} />
+                )}
                 <div style={{
                   fontSize: 11, color: "var(--text-muted)",
                   marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -561,6 +628,81 @@ export default function PlayerBarV2({
               <SleepTimerBanner timer={sleepTimer} onClear={onClearSleepTimer} />
             )}
             {onSpeedChange && <SpeedControl speed={playbackSpeed} onChange={onSpeedChange} />}
+
+            {onSetAbA && onSetAbB && (
+              <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <AbBtn label="A" active={abLoop?.a != null} onClick={onSetAbA} title="Set loop point A" />
+                <AbBtn label="B" active={abLoop?.b != null} onClick={onSetAbB} title="Set loop point B" />
+                {(abLoop?.a != null || abLoop?.b != null) && onClearAb && (
+                  <AbBtn label="×" active={false} onClick={onClearAb} title="Clear A–B loop" />
+                )}
+              </div>
+            )}
+
+            {currentSong && (
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setShowBookmarks(v => !v)}
+                  title="Bookmark posisi"
+                  style={{
+                    background: showBookmarks ? "var(--accent-dim)" : "transparent",
+                    border: `1px solid ${showBookmarks ? "var(--accent-border)" : "var(--border)"}`,
+                    borderRadius: "var(--radius-sm)",
+                    cursor: "pointer",
+                    color: showBookmarks ? "var(--accent-light)" : "var(--text-faint)",
+                    padding: "2px 6px",
+                    fontSize: 10,
+                  }}
+                >
+                  🔖{getBookmarksForSong(currentSong.id).length > 0 ? ` ${getBookmarksForSong(currentSong.id).length}` : ""}
+                </button>
+                {showBookmarks && (
+                  <BookmarkPopover
+                    songId={currentSong.id}
+                    currentTime={ct}
+                    onClose={() => setShowBookmarks(false)}
+                  />
+                )}
+              </div>
+            )}
+
+            {onOpenFullscreen && currentSong && (
+              <button
+                type="button"
+                onClick={onOpenFullscreen}
+                title="Now playing fullscreen (Shift+P)"
+                aria-label="Now playing fullscreen"
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                  color: "var(--text-faint)",
+                  padding: "3px 7px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = "var(--accent-border)";
+                  e.currentTarget.style.color = "var(--accent-light)";
+                  e.currentTarget.style.background = "var(--accent-dim)";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = "var(--border)";
+                  e.currentTarget.style.color = "var(--text-faint)";
+                  e.currentTarget.style.background = "transparent";
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                  <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+                  <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+                  <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              </button>
+            )}
 
             {/* Waveform style cycle: bars → mirror → line → progress */}
             <button

@@ -97,6 +97,9 @@
     "notification:default",
     "notification:allow-notify",
     "notification:allow-request-permission",
-    "notification:allow-is-permission-granted"
+    "notification:allow-is-permission-granted",
+
+    "autostart:default",
+    "global-shortcut:default"
   ]
 }

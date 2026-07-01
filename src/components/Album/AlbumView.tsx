@@ -13,6 +13,7 @@ import { getDb, deleteSongs, getPlaylists, addToPlaylist } from "../../lib/db";
 import type { Song } from "../../lib/db";
 import CoverArt from "../CoverArt";
 import SongContextMenu, { ConfirmDeleteModal, BulkActionBar } from "../SongContextMenu";
+import TagEditorModal from "../Library/TagEditorModal";
 import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 
 interface Props {
@@ -240,6 +241,7 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
+  const [editSong, setEditSong]       = useState<Song | null>(null);
   const [playlists, setPlaylists]     = useState<any[]>([]);
   const lastSelIdx = useRef(-1);
 
@@ -327,7 +329,16 @@ function AlbumDetail({ album, onBack, onPlay, onDelete }: {
           onPlayNext={handlePlayNext}
           onAddToQueue={handleAddToQueue}
           onAddToPlaylist={handleAddToPlaylist}
+          onEditMetadata={song => setEditSong(song)}
           onDelete={ss => setConfirmDel(ss)}
+        />
+      )}
+
+      {editSong && (
+        <TagEditorModal
+          song={editSong}
+          onClose={() => setEditSong(null)}
+          onSaved={() => setEditSong(null)}
         />
       )}
 
@@ -585,6 +596,7 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
+  const [editSong, setEditSong]       = useState<Song | null>(null);
   const [playlists, setPlaylists]     = useState<any[]>([]);
   const lastSelIdx = useRef(-1);
 
@@ -668,7 +680,16 @@ function ArtistDetail({ artist, onBack, onPlay }: { artist: any; onBack: () => v
           onPlayNext={handlePlayNext}
           onAddToQueue={handleAddToQueue}
           onAddToPlaylist={handleAddToPlaylist}
+          onEditMetadata={song => setEditSong(song)}
           onDelete={ss => setConfirmDel(ss)}
+        />
+      )}
+
+      {editSong && (
+        <TagEditorModal
+          song={editSong}
+          onClose={() => setEditSong(null)}
+          onSaved={() => setEditSong(null)}
         />
       )}
 

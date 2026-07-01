@@ -10,12 +10,13 @@ interface Props {
   open: boolean;
   onClose: () => void;
   queueCount: number;
+  position?: "right" | "bottom";
   onPlay: (song: Song) => void;
   onPlayFromQueue: (songs: Song[], startIndex: number, contextName: string) => void;
 }
 
 export default function QueueSidePanel({
-  open, onClose, queueCount, onPlay, onPlayFromQueue,
+  open, onClose, queueCount, position = "right", onPlay, onPlayFromQueue,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -35,7 +36,11 @@ export default function QueueSidePanel({
         onClick={onClose}
         aria-hidden
       />
-      <aside className="queue-side-panel" role="dialog" aria-label="Queue">
+      <aside
+        className={`queue-side-panel ${position === "bottom" ? "queue-side-panel--bottom" : ""}`}
+        role="dialog"
+        aria-label="Queue"
+      >
         <div className="queue-panel-header">
           <div>
             <h3 style={{ fontWeight: 700, fontSize: 14, color: "var(--text-primary)", margin: 0 }}>

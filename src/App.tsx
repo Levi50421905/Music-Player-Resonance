@@ -21,12 +21,13 @@ import {
   getDb, getAllSongs, setRating, recordPlay, getPlaylists, getSetting, getPlayHistory,
   migrateBase64CoversBatch,
 } from "./lib/db";
-import { scanFolder, addFiles, importPaths } from "./lib/scanner";
+import { scanFolder, addFiles, importPaths, scanOptionsFromSettings } from "./lib/scanner";
 import { usePlayerStore, useLibraryStore, useSettingsStore, enrichFromLibrary, waitForPlayerHydration, prunePlayerContext } from "./store";
 import { useMiniPlayer, useMiniPlayerCommands } from "./components/Player/useMiniPlayer";
 import { useKeyboardShortcuts } from "./components/Player/useKeyboardShortcuts";
 import { useTrackNotification, requestNotificationPermission } from "./components/Notification/useTrackNotification";
 import type { Song } from "./lib/db";
+import { hydrateBookmarks } from "./lib/bookmarks";
 
 // ── [NEW] Import 3 hal baru ──────────────────────────────────────────────────
 import { usePlaybackPersist, applyPendingSeek, restorePlaybackSession } from "./hooks/usePlaybackPersist";
@@ -47,12 +48,22 @@ import PlayerBarV2 from "./components/Player/PlayerBarV2";
 import ScanProgress, { EmptyLibraryState } from "./components/Library/ScanProgress";
 import SettingsPanel from "./components/Settings/SettingsPanel";
 import FolderView from "./components/Library/FolderView";
+import FavoritesView from "./components/Library/FavoritesView";
+import CommandPalette from "./components/CommandPalette";
 import SleepTimerButton, { useSleepTimer, SleepTimerBanner } from "./components/Player/SleepTimer";
 import KeyboardCheatsheet from "./components/KeyboardCheatsheet";
 import ToastContainer, { toastSuccess, toastError, toastInfo } from "./components/Notification/ToastSystem";
+import { useMediaKeys } from "./hooks/useMediaKeys";
+import { useSystemIntegration } from "./hooks/useSystemIntegration";
+import { useSkipSilence } from "./hooks/useSkipSilence";
+import { useDynamicTheme } from "./hooks/useDynamicTheme";
+import NowPlayingFullscreen from "./components/Player/NowPlayingFullscreen";
+import { generateRadioQueue, pickRandomNextSong } from "./lib/radioEngine";
+import { scrobbleTrack, updateNowPlaying } from "./lib/lastfm";
+import { hideAppSplash } from "./lib/appSplash";
 
 export type ActiveTab =
-  | "home" | "library" | "albums" | "artists"
+  | "home" | "library" | "favorites" | "albums" | "artists"
   | "smart" | "queue" | "equalizer" | "playlists" | "folders";
 
 // ── SVG Icons (tidak berubah dari v9) ────────────────────────────────────────
@@ -92,6 +103,11 @@ const Icons = {
   smart: (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 1l1.8 3.6 4 .6-2.9 2.8.7 4L8 10 4.4 12l.7-4L2.2 5.2l4-.6L8 1z"/>
+    </svg>
+  ),
+  favorites: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 13.5l-1.2-1.1C3.5 9.5 1 7.3 1 4.8 1 2.9 2.4 1.5 4.2 1.5c1.1 0 2.1.5 2.8 1.3L8 4.2l1-1.4c.7-.8 1.7-1.3 2.8-1.3 1.8 0 3.2 1.4 3.2 3.3 0 2.5-2.5 4.7-5.8 7.6L8 13.5z"/>
     </svg>
   ),
   queue: (
@@ -179,22 +195,23 @@ useEffect(() => {
   // ═══════════════════════════════════════════════════════════════════════════
   // [KEY #3] i18n — Baca bahasa aktif agar tab nav bisa diterjemahkan
   // ═══════════════════════════════════════════════════════════════════════════
-  const { lang } = useLang();
+  const { lang, t } = useLang();
+  const { hiddenTabs, queuePanelPosition, defaultPlaybackSpeed: defaultSpeed } = useSettingsStore() as any;
 
-  // ── Tab definitions — label reaktif terhadap bahasa ──────────────────────
   const PRIMARY_TABS = [
-    { id: "home"    as ActiveTab, label: lang === "id" ? "Beranda"  : "Home",    icon: Icons.home },
-    { id: "library" as ActiveTab, label: lang === "id" ? "Pustaka"  : "Library", icon: Icons.library },
-    { id: "albums"  as ActiveTab, label: lang === "id" ? "Album"    : "Albums",  icon: Icons.albums },
-    { id: "artists" as ActiveTab, label: lang === "id" ? "Artis"    : "Artists", icon: Icons.artists },
-    { id: "folders" as ActiveTab, label: lang === "id" ? "Folder"   : "Folders", icon: Icons.folders },
-    { id: "smart"   as ActiveTab, label: lang === "id" ? "Cerdas"   : "Smart",   icon: Icons.smart },
-  ];
+    { id: "home"      as ActiveTab, label: t.navHome,      icon: Icons.home },
+    { id: "library"   as ActiveTab, label: t.navLibrary,   icon: Icons.library },
+    { id: "favorites" as ActiveTab, label: t.navFavorites, icon: Icons.favorites },
+    { id: "albums"    as ActiveTab, label: t.navAlbums,    icon: Icons.albums },
+    { id: "artists"   as ActiveTab, label: t.navArtists,   icon: Icons.artists },
+    { id: "folders"   as ActiveTab, label: t.navFolders,   icon: Icons.folders },
+    { id: "smart"     as ActiveTab, label: t.navSmart,     icon: Icons.smart },
+  ].filter(tab => !(hiddenTabs ?? []).includes(tab.id));
 
   const SECONDARY_TABS = [
-    { id: "equalizer" as ActiveTab, label: "EQ", icon: Icons.equalizer },
-    { id: "playlists" as ActiveTab, label: lang === "id" ? "Playlist" : "Playlists", icon: Icons.playlists },
-  ];
+    { id: "equalizer" as ActiveTab, label: t.navEqualizer, icon: Icons.equalizer },
+    { id: "playlists" as ActiveTab, label: t.navPlaylists, icon: Icons.playlists },
+  ].filter(tab => !(hiddenTabs ?? []).includes(tab.id));
 
   // ── State (tidak berubah dari v9) ─────────────────────────────────────────
   const [activeTab, setActiveTab]           = useState<ActiveTab>("home");
@@ -203,9 +220,14 @@ useEffect(() => {
   const [showCheatsheet, setShowCheatsheet] = useState(false);
   const [onboarding, setOnboarding]         = useState<boolean | null>(null);
   const [preloadState, setPreloadState]     = useState<PreloadState>(null);
-  const [playbackSpeed, setPlaybackSpeed]   = useState(1);
+  const [playbackSpeed, setPlaybackSpeed]   = useState(defaultSpeed ?? 1);
   const [isDragOver, setIsDragOver]         = useState(false);
   const [showQueuePanel, setShowQueuePanel] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [abLoop, setAbLoop] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
+  const abLoopRef = useRef(abLoop);
+  abLoopRef.current = abLoop;
   const [detailResetKey, setDetailResetKey] = useState({ albums: 0, artists: 0, folders: 0 });
   const queueRestoredRef = useRef(false);
 
@@ -227,7 +249,7 @@ useEffect(() => {
   const { timer: sleepTimer, start: startSleep, clear: clearSleep, startPauseAfterSong, shouldPauseAfterSong } = useSleepTimer();
 
   const {
-    currentSong, isPlaying, volume,
+    currentSong, isPlaying, volume, progress,
     setCurrentSong, setIsPlaying, setProgress, setCurrentTime,
     setDuration, nextTrack, prevTrack, addToHistory, setPlayContext,
     cycleShuffleMode, cycleRepeatMode,
@@ -246,7 +268,31 @@ useEffect(() => {
   const { eqGains, accentColor, toggleLyrics, crossfadeSec = 0, replayGainEnabled } = useSettingsStore() as any;
   const { openMini, closeMini, isMiniOpen } = useMiniPlayer();
 
+  const handleNextRef = useRef<() => void>(() => {});
+  const handlePlayPauseRef = useRef<() => void>(() => {});
+  const handlePrevRef = useRef<() => void>(() => {});
+
   useTrackNotification();
+  useDynamicTheme(currentSong);
+
+  const mediaHandlers = useRef({ onPlayPause: () => {}, onNext: () => {}, onPrev: () => {} });
+  mediaHandlers.current = {
+    onPlayPause: () => handlePlayPauseRef.current(),
+    onNext: () => handleNextRef.current(),
+    onPrev: () => handlePrevRef.current(),
+  };
+  useMediaKeys(currentSong, isPlaying, {
+    onPlayPause: () => mediaHandlers.current.onPlayPause(),
+    onNext: () => mediaHandlers.current.onNext(),
+    onPrev: () => mediaHandlers.current.onPrev(),
+  });
+
+  useSystemIntegration({
+    onPlayPause: () => handlePlayPauseRef.current(),
+    onNext: () => handleNextRef.current(),
+    onPrev: () => handlePrevRef.current(),
+  });
+  useSkipSilence();
 
   // Sync accent color ke CSS variable saat berubah
   useEffect(() => {
@@ -282,6 +328,10 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
+    if (onboarding !== null) hideAppSplash();
+  }, [onboarding]);
+
+  useEffect(() => {
     if (isInitialized.current || onboarding === null || onboarding === true) return;
     isInitialized.current = true;
 
@@ -289,7 +339,17 @@ useEffect(() => {
       setLoading(true);
       try {
         await waitForPlayerHydration();
+        const { defaultShuffleOnStart, defaultRepeatOnStart } = useSettingsStore.getState() as any;
+        const ps = usePlayerStore.getState();
+        const freshSession = !ps.currentSong && (ps.unifiedQueue?.length ?? 0) === 0;
+        if (freshSession) {
+          if (defaultShuffleOnStart) ps.setShuffleMode("all");
+          if (defaultRepeatOnStart === "all") ps.setRepeatMode("repeat_all");
+          else if (defaultRepeatOnStart === "one") ps.setRepeatMode("repeat_one");
+          else if (defaultRepeatOnStart === "off") ps.setRepeatMode("all_stop");
+        }
         const db = await getDb();
+        await hydrateBookmarks();
         const [allSongs, allPlaylists, playHistory] = await Promise.all([
           getAllSongs(db),
           getPlaylists(db),
@@ -334,7 +394,7 @@ useEffect(() => {
         const qLen = usePlayerStore.getState().unifiedQueue?.length ?? 0;
         if (!queueRestoredRef.current && qLen > 0) {
           queueRestoredRef.current = true;
-          toastInfo(lang === "id" ? `Antrian dipulihkan (${qLen} lagu)` : `Queue restored (${qLen} tracks)`);
+          toastInfo(t.toastQueueRestored(qLen));
         }
       } finally {
         setLoading(false);
@@ -354,7 +414,6 @@ useEffect(() => {
     audioEngine.setMonoDownmix(!!monoDownmix);
   }, []);
 
-  const handleNextRef = useRef<() => void>(() => {});
   const playStartTimeRef = useRef<number>(0);
   const playDurationRef = useRef<number>(0);
   const playCountedRef = useRef<boolean>(false);
@@ -363,8 +422,17 @@ useEffect(() => {
   const errorSkipCountRef = useRef<number>(0);
 
   useEffect(() => {
+    setAbLoop({ a: null, b: null });
+  }, [currentSong?.id]);
+
+  useEffect(() => {
     audioEngine.onTimeUpdate(t => {
       setCurrentTime(t);
+      const ab = abLoopRef.current;
+      if (ab.a != null && ab.b != null && ab.b > ab.a && t >= ab.b) {
+        audioEngine.seek(ab.a);
+        return;
+      }
       if (audioEngine.duration > 0) {
         setProgress((t / audioEngine.duration) * 100);
         if (!playCountedRef.current && audioEngine.duration > 0) {
@@ -390,7 +458,7 @@ useEffect(() => {
       lastErrorTimeRef.current = now;
 
       const fileName = path.replace(/\\/g, "/").split("/").pop() ?? path;
-      toastError(`Gagal memutar: ${fileName}`);
+      toastError(t.toastPlayFailed(fileName));
 
       // [FIX] Hanya auto-skip jika error berturut-turut tidak terlalu banyak
       // (cegah infinite skip loop jika semua lagu gagal)
@@ -455,6 +523,10 @@ useEffect(() => {
       if (elA) elA.playbackRate = playbackSpeed;
       if (elB) elB.playbackRate = playbackSpeed;
       addToHistory(song.id);
+      const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret } = useSettingsStore.getState() as any;
+      if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret) {
+        updateNowPlaying(song, lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
+      }
       setTimeout(() => { playDurationRef.current = audioEngine.duration; }, 500);
     } catch {
       setIsPlaying(false);
@@ -490,6 +562,10 @@ useEffect(() => {
           const updated = latestSongs.find((s: Song) => s.id === song.id);
           scs({ ...cs, play_count: updated?.play_count ?? (cs.play_count || 0) + 1 });
         }
+        const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret, scrobbleThresholdSec } = useSettingsStore.getState() as any;
+        if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret && elapsed >= (scrobbleThresholdSec ?? 30)) {
+          scrobbleTrack(song, Date.now(), lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
+        }
       } catch {}
     }
   }, [setSongs]);
@@ -521,15 +597,36 @@ useEffect(() => {
       playSong(result.song);
       return;
     }
-    const { queueEndBehavior } = useSettingsStore.getState() as any;
-    const { playContext, contextName } = usePlayerStore.getState();
+    const { queueEndBehavior, radioSource, radioSmartEnabled, autoMixOnQueueEnd } = useSettingsStore.getState() as any;
+    const { playContext, contextName, history, currentSong: cs, repeatMode } = usePlayerStore.getState();
     if (queueEndBehavior === "loop" && playContext.length > 0) {
       playList(playContext, 0, contextName || "Queue");
       return;
     }
+    if (queueEndBehavior === "radio" && songs.length > 0) {
+      const radioQueue = generateRadioQueue(songs, history, {
+        source: radioSource ?? "smart_mood",
+        smartMood: radioSmartEnabled !== false,
+        currentSong: cs,
+        count: 25,
+      });
+      if (radioQueue.length > 0) {
+        toastInfo(t.toastRadioMode);
+        playList(radioQueue, 0, "Radio");
+        return;
+      }
+    }
+    const repeatActive = repeatMode === "repeat_one" || repeatMode === "repeat_all" || repeatMode === "repeat_category";
+    if (autoMixOnQueueEnd !== false && !repeatActive && songs.length > 0) {
+      const random = pickRandomNextSong(songs, cs, history);
+      if (random) {
+        playSong(random);
+        return;
+      }
+    }
     setIsPlaying(false);
     audioEngine.stop();
-  }, [nextTrack, playSong, shouldPauseAfterSong, currentSong, maybeRecordPlay, playList]);
+  }, [nextTrack, playSong, shouldPauseAfterSong, currentSong, maybeRecordPlay, playList, songs, lang]);
 
   handleNextRef.current = handleNext;
 
@@ -558,6 +655,17 @@ useEffect(() => {
     }
   }, [isPlaying, currentSong, playSong]);
 
+  handlePlayPauseRef.current = handlePlayPause;
+  handlePrevRef.current = handlePrev;
+
+  const handleSetAbA = useCallback(() => {
+    setAbLoop(s => ({ ...s, a: audioEngine.currentTime }));
+  }, []);
+  const handleSetAbB = useCallback(() => {
+    setAbLoop(s => ({ ...s, b: audioEngine.currentTime }));
+  }, []);
+  const handleClearAb = useCallback(() => setAbLoop({ a: null, b: null }), []);
+
   const handleRating = useCallback(async (songId: number, stars: number) => {
     setSongs((prev: any) =>
       Array.isArray(prev) ? prev.map((s: Song) => s.id === songId ? { ...s, stars } : s) : prev
@@ -566,16 +674,16 @@ useEffect(() => {
     if (cs && cs.id === songId) scs({ ...cs, stars });
     const db = await getDb();
     await setRating(db, songId, stars);
-    toastSuccess(stars === 0 ? "Rating cleared" : `${stars} star rating saved`);
-  }, [setSongs]);
+    toastSuccess(stars === 0 ? t.toastRatingCleared : t.toastRatingSaved(stars));
+  }, [setSongs, t]);
 
   const handleScanFolder = useCallback(async () => {
-    toastInfo("Starting folder scan…");
-    const { excludeFolders } = useSettingsStore.getState();
+    toastInfo(t.toastScanStarting);
+    const scanOpts = scanOptionsFromSettings(useSettingsStore.getState() as any);
     try {
       const result = await scanFolder(p => {
         setScanProgress({ ...p, phase: p.done ? "completed" : "scanning" });
-      }, { excludeFolders });
+      }, scanOpts);
       const db = await getDb();
       const updated = await getAllSongs(db);
       setSongs(Array.isArray(updated) ? updated : []);
@@ -585,17 +693,17 @@ useEffect(() => {
       if (result.failedFiles.length > 0) parts.push(`${result.failedFiles.length} failed`);
       toastSuccess(parts.join(" · "));
     } catch {
-      toastError("Scan failed");
+      toastError(t.toastScanFailed);
       setScanProgress(null);
     }
   }, []);
 
   const handleAddFiles = useCallback(async () => {
-    const { excludeFolders } = useSettingsStore.getState();
+    const scanOpts = scanOptionsFromSettings(useSettingsStore.getState() as any);
     try {
       const added = await addFiles(p => {
         setScanProgress({ ...p, phase: p.done ? "completed" : "indexing" });
-      }, { excludeFolders });
+      }, scanOpts);
       const db = await getDb();
       const updated = await getAllSongs(db);
       setSongs(Array.isArray(updated) ? updated : []);
@@ -620,12 +728,12 @@ useEffect(() => {
           if (!paths.length) return;
 
           toastInfo(`Adding ${paths.length} file(s)…`);
-          const { excludeFolders } = useSettingsStore.getState();
+          const scanOpts = scanOptionsFromSettings(useSettingsStore.getState() as any);
 
           try {
             await importPaths(paths, p => {
               setScanProgress({ ...p, phase: p.done ? "completed" : "indexing" });
-            }, { excludeFolders });
+            }, scanOpts);
 
             const db = await getDb();
             const updated = await getAllSongs(db);
@@ -689,32 +797,18 @@ useEffect(() => {
       setTimeout(() => searchInputRef.current?.focus(), 50);
     },
     onOpenSleepTimer: () => startSleep(15),
+    onOpenCommandPalette: () => setShowCommandPalette(true),
+    onToggleQueue: () => setShowQueuePanel(v => !v),
+    onToggleCheatsheet: () => setShowCheatsheet(s => !s),
+    onToggleFullscreen: () => setShowNowPlaying(v => !v),
   });
 
-  // ── Loading screen ──────────────────────────────────────────────────────────
-  if (onboarding === null) return (
-    <div style={{
-      height: "100vh", background: "#070718",
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", gap: 16,
-    }}>
-      <div style={{
-        width: 44, height: 44,
-        background: "linear-gradient(135deg, #7C3AED, #EC4899)",
-        borderRadius: 12, display: "flex", alignItems: "center",
-        justifyContent: "center", fontSize: 22,
-      }}>♪</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{
-          width: 18, height: 18, borderRadius: "50%",
-          border: "2px solid #7C3AED", borderTopColor: "transparent",
-          animation: "spin 0.8s linear infinite",
-        }} />
-        <span style={{ fontSize: 13, color: "#7a7a96" }}>Loading Sonarix…</span>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  );
+  const navigateTab = useCallback((tab: string) => {
+    switchTab(tab as ActiveTab);
+  }, [switchTab]);
+
+  // Splash handled by index.html until onboarding state is known
+  if (onboarding === null) return null;
 
   if (onboarding) return <Onboarding onComplete={handleOnboardingComplete} />;
 
@@ -794,7 +888,7 @@ useEffect(() => {
               <button
                 className={`icon-btn ${showQueuePanel ? "active" : ""}`}
                 onClick={() => setShowQueuePanel(v => !v)}
-                title={lang === "id" ? "Antrian" : "Queue"}
+                title={t.queueTitle}
                 style={{ position: "relative" }}
               >
                 {Icons.queue}
@@ -877,6 +971,10 @@ useEffect(() => {
               )
             )}
 
+            {activeTab === "favorites" && (
+              <FavoritesView onPlay={playList} onRating={handleRating} />
+            )}
+
             {activeTab === "albums"  && <AlbumView onPlay={(list, idx) => playList(list, idx ?? 0, "Album")} resetKey={detailResetKey.albums} />}
             {activeTab === "artists" && <ArtistView onPlay={(list, idx) => playList(list, idx ?? 0, "Artist")} resetKey={detailResetKey.artists} />}
             {activeTab === "folders" && <FolderView onPlay={(list, idx, folderName) => playList(list, idx ?? 0, folderName ?? "Folder")} resetKey={detailResetKey.folders} />}
@@ -894,11 +992,33 @@ useEffect(() => {
             open={showQueuePanel}
             onClose={() => setShowQueuePanel(false)}
             queueCount={queueCount}
+            position={queuePanelPosition ?? "right"}
             onPlay={song => playSong(song)}
             onPlayFromQueue={(list, idx, name) => playList(list, idx, name)}
           />
         </div>
       </div>
+
+      <CommandPalette
+        open={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        songs={songs}
+        onPlay={(song, list) => {
+          const idx = list.findIndex(s => s.id === song.id);
+          playList(list, idx >= 0 ? idx : 0, "Search");
+        }}
+        onNavigate={navigateTab}
+      />
+
+      <NowPlayingFullscreen
+        open={showNowPlaying}
+        onClose={() => setShowNowPlaying(false)}
+        onPlayPause={handlePlayPause}
+        onNext={handleNext}
+        onPrev={handlePrev}
+        progress={progress}
+        isPlaying={isPlaying}
+      />
 
       <PlayerBarV2
         onPlayPause={handlePlayPause}
@@ -910,6 +1030,11 @@ useEffect(() => {
         onSpeedChange={setPlaybackSpeed}
         sleepTimer={sleepTimer}
         onClearSleepTimer={clearSleep}
+        abLoop={abLoop}
+        onSetAbA={handleSetAbA}
+        onSetAbB={handleSetAbB}
+        onClearAb={handleClearAb}
+        onOpenFullscreen={() => setShowNowPlaying(true)}
       />
     </div>
   );

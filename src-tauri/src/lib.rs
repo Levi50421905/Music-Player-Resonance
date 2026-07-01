@@ -13,6 +13,8 @@ use std::io::Write;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tauri::{Manager, Emitter};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::Semaphore;
 use tokio::sync::OnceCell;
 use tokio::sync::Mutex as AsyncMutex;
@@ -63,10 +65,60 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .build(),
         )
+        .setup(|app| {
+            let show_i = MenuItem::with_id(app, "tray_show", "Show Sonarix", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let icon = app.default_window_icon().cloned();
+            let mut builder = TrayIconBuilder::new().menu(&menu);
+            if let Some(icon) = icon {
+                builder = builder.icon(icon);
+            }
+
+            builder
+                .tooltip("Sonarix")
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "tray_show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "tray_quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             get_exe_dir,
@@ -83,6 +135,8 @@ pub fn run() {
             watch_folder,    // [NEW]
             unwatch_folder,  // [NEW]
             list_watch_folders, // [NEW]
+            unblock_file,       // Windows Zone.Identifier
+            write_audio_metadata,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -435,6 +489,27 @@ fn check_audio_support() -> Vec<String> {
 }
 
 #[tauri::command]
+fn unblock_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let escaped = path.replace('\'', "''");
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile", "-NonInteractive", "-Command",
+                &format!("Unblock-File -LiteralPath '{}'", escaped),
+            ])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+#[tauri::command]
 async fn open_file_manager(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -454,6 +529,73 @@ async fn open_file_manager(path: String) -> Result<(), String> {
             .unwrap_or_else(|| path.clone());
         std::process::Command::new("xdg-open").arg(&folder).spawn().map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+// ─── Write ID3 / FLAC / etc. metadata tags ───────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct MetadataInput {
+    path: String,
+    title: String,
+    artist: String,
+    album: String,
+    genre: String,
+    year: Option<u32>,
+}
+
+#[tauri::command]
+fn write_audio_metadata(input: MetadataInput) -> Result<(), String> {
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, TaggedFileExt};
+    use lofty::probe::Probe;
+    use lofty::tag::{Accessor, Tag, TagType};
+
+    let path = Path::new(&input.path);
+    if !path.is_file() {
+        return Err(format!("File tidak ditemukan: {}", input.path));
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    let tag_type = match ext.as_str() {
+        "mp3" | "mp2" | "mp4" | "m4a" | "m4b" | "aac" => TagType::Id3v2,
+        "flac" => TagType::VorbisComments,
+        "ogg" | "opus" => TagType::VorbisComments,
+        "wav" => TagType::Id3v2,
+        _ => TagType::Id3v2,
+    };
+
+    let mut tagged = Probe::open(path)
+        .map_err(|e| format!("Gagal buka file: {}", e))?
+        .guess_file_type()
+        .map_err(|e| format!("Format tidak dikenali: {}", e))?
+        .read()
+        .map_err(|e| format!("Gagal baca metadata: {}", e))?;
+
+    let mut tag = tagged
+        .primary_tag()
+        .cloned()
+        .or_else(|| tagged.first_tag().cloned())
+        .unwrap_or_else(|| Tag::new(tag_type));
+
+    tag.set_title(input.title);
+    tag.set_artist(input.artist);
+    tag.set_album(input.album);
+    tag.set_genre(input.genre);
+    if let Some(y) = input.year {
+        tag.set_year(y);
+    }
+
+    tagged.insert_tag(tag);
+    tagged
+        .save_to_path(path, WriteOptions::default())
+        .map_err(|e| format!("Gagal tulis tag: {}", e))?;
+
     Ok(())
 }
 

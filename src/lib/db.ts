@@ -156,10 +156,24 @@ async function migrate(db: Database) {
     "ALTER TABLE songs ADD COLUMN loved INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE songs ADD COLUMN sample_rate INTEGER",
     "ALTER TABLE songs ADD COLUMN bits_per_sample INTEGER",
+    "ALTER TABLE songs ADD COLUMN is_duplicate INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column exists */ }
   }
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS song_bookmarks (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      song_id    INTEGER NOT NULL,
+      time       REAL    NOT NULL,
+      label      TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(song_id) REFERENCES songs(id) ON DELETE CASCADE,
+      UNIQUE(song_id, time)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_song ON song_bookmarks(song_id);
+  `);
 }
 
 export interface Song {
@@ -183,6 +197,7 @@ export interface Song {
   has_cover?: boolean;
   sample_rate?: number | null;
   bits_per_sample?: number | null;
+  is_duplicate?: number;
 }
 
 export interface PlayRecord {
@@ -193,7 +208,7 @@ export interface PlayRecord {
 const SONG_LIST_SELECT = `
   SELECT s.id, s.path, s.title, s.artist, s.album, s.genre, s.year,
          s.duration, s.bitrate, s.format, s.bpm, s.file_size, s.loved, s.date_added,
-         s.sample_rate, s.bits_per_sample,
+         s.sample_rate, s.bits_per_sample, s.is_duplicate,
          (s.cover_art IS NOT NULL AND s.cover_art != '') AS has_cover,
          r.stars,
          COALESCE(pc.play_count, 0) AS play_count
@@ -219,20 +234,27 @@ export async function upsertSong(db: Database, song: Omit<Song, "id" | "date_add
     if (fileRef) coverRef = fileRef;
   }
 
+  const isDup = (song as Song).is_duplicate ?? 0;
   await db.execute(
-    `INSERT INTO songs (path, title, artist, album, genre, year, duration, bitrate, format, cover_art, bpm, file_size, sample_rate, bits_per_sample)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    `INSERT INTO songs (path, title, artist, album, genre, year, duration, bitrate, format, cover_art, bpm, file_size, sample_rate, bits_per_sample, is_duplicate)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT(path) DO UPDATE SET
        title=excluded.title, artist=excluded.artist, album=excluded.album,
        genre=excluded.genre, year=excluded.year, duration=excluded.duration,
        bitrate=excluded.bitrate, format=excluded.format,
        cover_art=excluded.cover_art, bpm=excluded.bpm, file_size=excluded.file_size,
-       sample_rate=excluded.sample_rate, bits_per_sample=excluded.bits_per_sample`,
+       sample_rate=excluded.sample_rate, bits_per_sample=excluded.bits_per_sample,
+       is_duplicate=CASE WHEN excluded.is_duplicate=1 THEN 1 ELSE songs.is_duplicate END`,
     [song.path, song.title, song.artist, song.album, song.genre,
      song.year, song.duration, song.bitrate, song.format, coverRef,
      song.bpm, song.file_size ?? null,
-     (song as any).sample_rate ?? null, (song as any).bits_per_sample ?? null]
+     (song as Song).sample_rate ?? null, (song as Song).bits_per_sample ?? null,
+     isDup]
   );
+}
+
+export async function markSongDuplicate(db: Database, path: string): Promise<void> {
+  await db.execute("UPDATE songs SET is_duplicate = 1 WHERE path = $1", [path]);
 }
 
 export async function getAllSongs(db: Database): Promise<Song[]> {
@@ -252,8 +274,23 @@ export async function getSongCoverArt(db: Database, songId: number): Promise<str
   return resolveCoverArtUrl(stored);
 }
 
-export async function deleteSong(db: Database, songId: number) {
-  await db.execute(`DELETE FROM songs WHERE id = $1`, [songId]);
+export async function updateSongMetadata(
+  db: Database,
+  songId: number,
+  fields: Partial<Pick<Song, "title" | "artist" | "album" | "genre" | "year">>,
+): Promise<void> {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  let i = 1;
+  for (const [key, val] of Object.entries(fields)) {
+    if (val !== undefined) {
+      sets.push(`${key} = $${i++}`);
+      vals.push(val);
+    }
+  }
+  if (sets.length === 0) return;
+  vals.push(songId);
+  await db.execute(`UPDATE songs SET ${sets.join(", ")} WHERE id = $${i}`, vals);
 }
 
 export async function deleteSongs(db: Database, songIds: number[]) {

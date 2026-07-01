@@ -7,8 +7,10 @@ import { open }                    from "@tauri-apps/plugin-dialog";
 import { readDir, readFile, stat } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 import * as musicMetadata          from "music-metadata";
-import { getDb, upsertSong, type Song } from "./db";
+import { getDb, upsertSong, markSongDuplicate, type Song } from "./db";
 import { META_READ_BYTES }         from "./coverArt";
+import { pickLocalizedTag, type MetadataLangPriority } from "./metadataLang";
+import { fetchCoverArtUrl } from "./albumArtFetch";
 
 const AUDIO_EXTENSIONS = new Set([
   "mp3", "flac", "wav", "ogg", "aac", "m4a", "mp4", "m4b", "alac", "wma", "opus", "ape"
@@ -38,6 +40,76 @@ export interface ScanResult {
 
 export interface ScanOptions {
   excludeFolders?: string[];
+  excludeExtensions?: string[];
+  duplicateHandling?: "skip" | "mark" | "allow";
+  scanFollowSymlinks?: boolean;
+  autoUnblockFiles?: boolean;
+  metadataLangPriority?: MetadataLangPriority;
+  fetchMissingCoverArt?: boolean;
+}
+
+/** Build scan options from persisted settings store. */
+export function scanOptionsFromSettings(s: {
+  excludeFolders?: string[];
+  excludeExtensions?: string[];
+  duplicateHandling?: ScanOptions["duplicateHandling"];
+  scanFollowSymlinks?: boolean;
+  autoUnblockFiles?: boolean;
+  metadataLangPriority?: MetadataLangPriority;
+}): ScanOptions {
+  return {
+    excludeFolders: s.excludeFolders,
+    excludeExtensions: s.excludeExtensions,
+    duplicateHandling: s.duplicateHandling,
+    scanFollowSymlinks: s.scanFollowSymlinks,
+    autoUnblockFiles: s.autoUnblockFiles,
+    metadataLangPriority: s.metadataLangPriority,
+    fetchMissingCoverArt: true,
+  };
+}
+
+async function buildDuplicateKeyMap(db: Awaited<ReturnType<typeof getDb>>): Promise<Map<string, number>> {
+  const rows = await db.select<{ title: string; artist: string; duration: number; id: number }[]>(
+    `SELECT id, title, artist, duration FROM songs`,
+  );
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const key = duplicateKey(r.title, r.artist, r.duration);
+    if (!map.has(key)) map.set(key, r.id);
+  }
+  return map;
+}
+
+function duplicateKey(title: string, artist: string, duration: number): string {
+  return `${(title ?? "").trim().toLowerCase()}|${(artist ?? "").trim().toLowerCase()}|${Math.round(duration ?? 0)}`;
+}
+
+function isExcludedExtension(filePath: string, excludeExtensions: string[]): boolean {
+  if (excludeExtensions.length === 0) return false;
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  return excludeExtensions.some(e => e.replace(/^\./, "").toLowerCase() === ext);
+}
+
+async function ingestScannedSong(
+  db: Awaited<ReturnType<typeof getDb>>,
+  song: Omit<Song, "id" | "date_added">,
+  dupKeys: Map<string, number> | null,
+  dupMode: "skip" | "mark" | "allow",
+): Promise<"ok" | "skip"> {
+  const key = duplicateKey(song.title ?? "", song.artist ?? "", song.duration ?? 0);
+  const isDup = dupKeys?.has(key) ?? false;
+  if (isDup && dupMode === "skip") return "skip";
+
+  const toSave = {
+    ...song,
+    is_duplicate: isDup && dupMode === "mark" ? 1 : (song.is_duplicate ?? 0),
+  };
+  await upsertSong(db, toSave);
+  if (isDup && dupMode === "mark") {
+    await markSongDuplicate(db, song.path);
+  }
+  if (dupKeys && dupMode !== "allow") dupKeys.set(key, -1);
+  return "ok";
 }
 
 function sanitizeCoverArt(pic: { format: string; data: Uint8Array }): string | null {
@@ -159,6 +231,9 @@ async function _importFileList(
   const db = await getDb();
   const existingPaths = await buildExistingPathMap(db);
   const exclude = normalizeExcludeFolders(options?.excludeFolders ?? []);
+  const excludeExt = (options?.excludeExtensions ?? []).map(e => e.replace(/^\./, "").toLowerCase());
+  const dupMode = options?.duplicateHandling ?? "allow";
+  const dupKeys = dupMode !== "allow" ? await buildDuplicateKeyMap(db) : null;
   const results: Song[] = [];
   const failedFiles: { path: string; error: string }[] = [];
   let skippedCount = 0;
@@ -166,7 +241,7 @@ async function _importFileList(
 
   for (let i = 0; i < filePaths.length; i++) {
     const filePath = normalizePath(filePaths[i]);
-    if (isExcluded(filePath, exclude)) {
+    if (isExcluded(filePath, exclude) || isExcludedExtension(filePath, excludeExt)) {
       skippedCount++;
       continue;
     }
@@ -194,8 +269,12 @@ async function _importFileList(
     }
 
     try {
-      const song = await parseFile(filePath, currentFileSize);
-      await upsertSong(db, song);
+      if (options?.autoUnblockFiles) {
+        try { await invoke("unblock_file", { path: filePath }); } catch { /* non-Windows */ }
+      }
+      const song = await parseFile(filePath, currentFileSize, options);
+      const handled = await ingestScannedSong(db, song, dupKeys, dupMode);
+      if (handled === "skip") { skippedCount++; continue; }
       results.push(song as Song);
     } catch (err) {
       const errMsg = String(err);
@@ -235,12 +314,15 @@ async function _scanPaths(
   const db            = await getDb();
   const existingPaths = await buildExistingPathMap(db);
   const exclude       = normalizeExcludeFolders(options?.excludeFolders ?? []);
+  const excludeExt    = (options?.excludeExtensions ?? []).map(e => e.replace(/^\./, "").toLowerCase());
+  const dupMode       = options?.duplicateHandling ?? "allow";
+  const dupKeys       = dupMode !== "allow" ? await buildDuplicateKeyMap(db) : null;
 
   const allFiles: string[] = [];
   for (const folderPath of folderPaths) {
     const normalizedRoot = normalizePath(folderPath);
     onProgress?.({ total: 0, current: 0, currentFile: "", currentFolder: getLastPathPart(normalizedRoot), done: false });
-    const files = await listAudioFiles(normalizedRoot, exclude);
+    const files = await listAudioFiles(normalizedRoot, exclude, excludeExt, options?.scanFollowSymlinks);
     allFiles.push(...files);
   }
 
@@ -256,6 +338,10 @@ async function _scanPaths(
 
   for (let i = 0; i < allFiles.length; i++) {
     const filePath  = allFiles[i];
+    if (isExcludedExtension(filePath, excludeExt)) {
+      skippedCount++;
+      continue;
+    }
     const fileName  = getLastPathPart(filePath);
     const parentFolder = getParentFolderName(filePath);
 
@@ -282,8 +368,12 @@ async function _scanPaths(
     }
 
     try {
-      const song = await parseFile(filePath, currentFileSize);
-      await upsertSong(db, song);
+      if (options?.autoUnblockFiles) {
+        try { await invoke("unblock_file", { path: filePath }); } catch { /* non-Windows */ }
+      }
+      const song = await parseFile(filePath, currentFileSize, options);
+      const handled = await ingestScannedSong(db, song, dupKeys, dupMode);
+      if (handled === "skip") { skippedCount++; continue; }
       results.push(song as Song);
     } catch (err) {
       const errMsg = String(err);
@@ -338,7 +428,12 @@ function getParentFolderName(filePath: string): string {
   return parts[0] ?? "";
 }
 
-async function listAudioFiles(dirPath: string, excludeFolders: string[]): Promise<string[]> {
+async function listAudioFiles(
+  dirPath: string,
+  excludeFolders: string[],
+  excludeExtensions: string[] = [],
+  followSymlinks = false,
+): Promise<string[]> {
   const entries = await readDir(dirPath);
   const files: string[] = [];
 
@@ -354,9 +449,22 @@ async function listAudioFiles(dirPath: string, excludeFolders: string[]): Promis
           const subEntries = await readDir(fullPath);
           await walk(subEntries, fullPath);
         } catch { /* skip unreadable folder */ }
+      } else if ((entry as { isSymlink?: boolean }).isSymlink && followSymlinks) {
+        try {
+          const st = await stat(fullPath);
+          if (st.isDirectory) {
+            const subEntries = await readDir(fullPath);
+            await walk(subEntries, fullPath);
+          } else if (st.isFile && entry.name) {
+            const ext = entry.name.split(".").pop()?.toLowerCase() ?? "";
+            if (AUDIO_EXTENSIONS.has(ext) && !isExcludedExtension(fullPath, excludeExtensions)) {
+              files.push(fullPath);
+            }
+          }
+        } catch { /* broken symlink */ }
       } else if (entry.isFile && entry.name) {
         const ext = entry.name.split(".").pop()?.toLowerCase() ?? "";
-        if (AUDIO_EXTENSIONS.has(ext)) files.push(fullPath);
+        if (AUDIO_EXTENSIONS.has(ext) && !isExcludedExtension(fullPath, excludeExtensions)) files.push(fullPath);
       }
     }
   }
@@ -396,7 +504,8 @@ async function readAudioHeader(filePath: string): Promise<Uint8Array> {
 
 async function parseFile(
   filePath: string,
-  fileSize?: number | null
+  fileSize?: number | null,
+  options?: ScanOptions,
 ): Promise<Omit<Song, "id" | "date_added">> {
   const ext = filePath.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
   const normalizedPath = normalizePath(filePath);
@@ -431,11 +540,24 @@ async function parseFile(
     }
   }
 
-  const { common, format } = meta;
+  const { common, format, native } = meta;
 
   let coverArt: string | null = null;
   if (common.picture && common.picture.length > 0) {
     coverArt = sanitizeCoverArt(common.picture[0]);
+  }
+
+  const langPriority = options?.metadataLangPriority ?? "auto";
+  const titleFallback = common.title ?? fileName;
+  const artistFallback = common.artist ?? common.albumartist ?? "Unknown Artist";
+  const albumFallback = common.album ?? "Unknown Album";
+  const title = pickLocalizedTag(native as Record<string, unknown>, "title", langPriority, titleFallback);
+  const artist = pickLocalizedTag(native as Record<string, unknown>, "artist", langPriority, artistFallback);
+  const album = pickLocalizedTag(native as Record<string, unknown>, "album", langPriority, albumFallback);
+
+  if (!coverArt && options?.fetchMissingCoverArt !== false) {
+    const url = await fetchCoverArtUrl({ title, artist, album });
+    if (url) coverArt = url;
   }
 
   const codec = (format.codec ?? "").toLowerCase();
@@ -444,9 +566,9 @@ async function parseFile(
 
   return {
     path:       normalizedPath,
-    title:      common.title ?? fileName,
-    artist:     common.artist ?? common.albumartist ?? "Unknown Artist",
-    album:      common.album ?? "Unknown Album",
+    title,
+    artist,
+    album,
     genre:      common.genre?.[0] ?? "Unknown",
     year:       common.year ?? null,
     duration:   format.duration ?? 0,
@@ -456,6 +578,7 @@ async function parseFile(
     bpm:        common.bpm ?? null,
     file_size:  resolvedFileSize,
     loved:      0,
+    is_duplicate: 0,
     stars:      undefined,
     play_count: undefined,
     sample_rate: format.sampleRate ? Math.round(format.sampleRate) : null,

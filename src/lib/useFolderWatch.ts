@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore, useLibraryStore } from "../store";
 import { getDb, getAllSongs } from "./db";
-import { scanFolders } from "./scanner";
+import { scanFolders, scanOptionsFromSettings } from "./scanner";
 import { toastInfo, toastSuccess } from "../components/Notification/ToastSystem";
 import * as musicMetadata from "music-metadata";
 import { readFile, stat } from "@tauri-apps/plugin-fs";
@@ -183,7 +183,7 @@ export function useFolderWatch() {
       autoScanDone.current = true;
       toastInfo("Auto scan on startup…");
       try {
-        await scanFolders(watchFolders, undefined, { excludeFolders });
+        await scanFolders(watchFolders, undefined, scanOptionsFromSettings(useSettingsStore.getState() as any));
         const db = await getDb();
         const updated = await getAllSongs(db);
         setSongs(Array.isArray(updated) ? updated : []);

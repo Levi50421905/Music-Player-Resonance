@@ -74,7 +74,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
       }}>
         <button
           onClick={onToggleCollapse}
-          title="Expand sidebar"
+          title={t.expandSidebar}
           style={{
             width: 26, height: 26, borderRadius: "var(--radius-md)",
             background: "transparent",
@@ -144,7 +144,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
         {/* Collapse button */}
         <button
           onClick={onToggleCollapse}
-          title="Collapse sidebar"
+          title={t.collapseSidebar}
           style={{
             position: "absolute", top: 10, right: 8, zIndex: 10,
             width: 22, height: 22, borderRadius: "var(--radius-sm)",

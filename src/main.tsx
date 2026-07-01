@@ -2,12 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 
+import { hideAppSplash } from "./lib/appSplash";
+
 async function bootstrap() {
-  // Tunggu Tauri IPC ready sebelum render apapun
-  if ((window as any).__TAURI_INTERNALS__) {
-    // Sudah ready
-  } else {
-    // Tunggu sampai Tauri inject IPC
+  if (!(window as any).__TAURI_INTERNALS__) {
     await new Promise<void>(resolve => {
       const check = () => {
         if ((window as any).__TAURI_INTERNALS__) resolve();
@@ -20,6 +18,7 @@ async function bootstrap() {
   const isMini = window.location.hash === "#/mini";
 
   if (isMini) {
+    hideAppSplash();
     const { default: MiniPlayer } = await import("./components/Player/MiniPlayer");
     ReactDOM.createRoot(document.getElementById("root")!).render(
       <React.StrictMode><MiniPlayer /></React.StrictMode>

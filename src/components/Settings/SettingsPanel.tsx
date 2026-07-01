@@ -36,6 +36,10 @@ import { audioEngine } from "../../lib/audioEngine";
 import { exportLibrary, importPlaylist } from "../../lib/playlistIO";
 import { getDb, getAllSongs } from "../../lib/db";
 import { getLang, setLang, type Lang, type Translations, T } from "../../lib/i18n";
+import {
+  ExtendedPlaybackSettings, ExtendedLibrarySettings, ExtendedAppearanceSettings,
+  ExtendedLyricsSettings, ExtendedSystemSettings, ExtendedLastfmSettings, ExtendedKeybindSettings, ExtendedDataSettings,
+} from "./ExtendedSettingsSections";
 
 type ThemeKey = "light" | "warm" | "dark" | "darker" | "amoled" | "dim";
 
@@ -631,6 +635,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
     fadeInOnResume, setFadeInOnResume,
     fadeInDuration, setFadeInDuration,
     queueEndBehavior, setQueueEndBehavior,
+    autoMixOnQueueEnd, setAutoMixOnQueueEnd,
     outputDeviceId, setOutputDeviceId,
     monoDownmix, setMonoDownmix,
     fontSizeScale, setFontSizeScale,
@@ -1129,6 +1134,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     <BackgroundPicker value={customBackground} onChange={setCustomBackground} />
                   </SettingRow>
                 </SettingCard>
+
+                <SectionTitle>{lang === "id" ? "Player & Tampilan Lanjutan" : "Player & Advanced UI"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedAppearanceSettings lang={lang} />
+                </SettingCard>
               </div>
             )}
 
@@ -1235,7 +1245,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                       options={[
                         { value: "stop",  label: lang === "id" ? "Berhenti" : "Stop" },
                         { value: "loop",  label: lang === "id" ? "Ulangi" : "Loop" },
-                        { value: "radio", label: `${lang === "id" ? "Radio" : "Radio"} (soon)` },
+                        { value: "radio", label: lang === "id" ? "Radio (Smart)" : "Radio (Smart)" },
                       ]}
                       value={queueEndBehavior ?? "stop"}
                       onChange={v => setQueueEndBehavior(v)}
@@ -1247,6 +1257,17 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                           : "Queue restarts from the beginning when all tracks finish."}
                       </p>
                     )}
+                  </SettingRow>
+                  <SettingRow
+                    label={lang === "id" ? "Auto-mix saat antrian habis" : "Auto-mix when queue ends"}
+                    desc={lang === "id"
+                      ? "Putar lagu acak dari pustaka tanpa menambah antrian (jika repeat mati)"
+                      : "Play random track from library without adding to queue (when repeat is off)"}
+                  >
+                    <Toggle
+                      checked={autoMixOnQueueEnd !== false}
+                      onChange={v => setAutoMixOnQueueEnd(v)}
+                    />
                   </SettingRow>
                   <SettingRow
                     label={`${lang === "id" ? "Ambang play count" : "Play count threshold"} — ${playCountThreshold ?? 70}%`}
@@ -1286,6 +1307,16 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                       {feedback && <span style={{ fontSize: 11, color: feedbackColor }}>{feedback.message}</span>}
                     </div>
                   </SettingRow>
+                </SettingCard>
+
+                <SectionTitle>{lang === "id" ? "Radio & Lanjutan" : "Radio & Advanced"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedPlaybackSettings lang={lang} />
+                </SettingCard>
+
+                <SectionTitle>Last.fm</SectionTitle>
+                <SettingCard>
+                  <ExtendedLastfmSettings lang={lang} />
                 </SettingCard>
               </div>
             )}
@@ -1408,6 +1439,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                   </SettingRow>
                 </SettingCard>
 
+                <SectionTitle>{lang === "id" ? "Duplikat & Lanjutan" : "Duplicates & Advanced"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedLibrarySettings lang={lang} />
+                </SettingCard>
+
                 <SectionTitle>{lang === "id" ? "Statistik Pustaka" : "Library Statistics"}</SectionTitle>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                   {[
@@ -1469,6 +1505,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                       <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.4 }}>{item}</p>
                     </div>
                   ))}
+                </SettingCard>
+
+                <SectionTitle>{lang === "id" ? "Tampilan Lirik" : "Lyrics Display"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedLyricsSettings lang={lang} />
                 </SettingCard>
               </div>
             )}
@@ -1538,6 +1579,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     <strong>Linux:</strong> {lang === "id" ? "Pastikan daemon notifikasi berjalan (dunst, notify-osd, dll)" : "Make sure a notification daemon is running (dunst, notify-osd)"}
                   </p>
                 </SettingCard>
+
+                <SectionTitle>{lang === "id" ? "Sistem" : "System"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedSystemSettings lang={lang} />
+                </SettingCard>
               </div>
             )}
 
@@ -1570,6 +1616,10 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     </div>
                   ))}
                 </div>
+                <SectionTitle>{lang === "id" ? "Pintasan kustom" : "Custom shortcuts"}</SectionTitle>
+                <SettingCard>
+                  <ExtendedKeybindSettings lang={lang} />
+                </SettingCard>
                 <p style={{ fontSize: 11, color: "var(--text-faint)", textAlign: "center" }}>
                   {lang === "id"
                     ? "Pintasan tidak aktif saat fokus di input / textarea"
@@ -1617,7 +1667,7 @@ function AboutSection({ lang }: { lang: Lang }) {
       }}>♪</div>
       <div style={{ textAlign: "center" }}>
         <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Sonarix</h2>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.1.1</p>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.2.0</p>
         <p style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6, lineHeight: 1.6, maxWidth: 360 }}>
           {lang === "id"
             ? "Antrian side panel · Smart mood shuffle · Badge kualitas audio · Deteksi M4A · Perbaikan sleep timer & persist antrian"
@@ -1632,6 +1682,13 @@ function AboutSection({ lang }: { lang: Lang }) {
           Smart shuffle · ReplayGain · Dynamic preload · Gapless · Smart crossfade ·
           Fade in on resume · 10-band EQ · LRC sync · Auto fetch lyrics · Folder watch · OS Notifications
         </p>
+      </SettingCard>
+
+      <SettingCard style={{ width: "100%", maxWidth: 420 }}>
+        <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>
+          {lang === "id" ? "Backup & Data" : "Backup & Data"}
+        </p>
+        <ExtendedDataSettings lang={lang} />
       </SettingCard>
 
       {/* Database path info */}

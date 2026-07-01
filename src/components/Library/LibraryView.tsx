@@ -21,7 +21,9 @@ import CoverArt from "../CoverArt";
 import StarRating from "../StarRating";
 import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 import SongContextMenu, { ConfirmDeleteModal, BulkActionBar } from "../SongContextMenu";
+import TagEditorModal from "./TagEditorModal";
 import { useSettingsStore } from "../../store";
+import { useLang } from "../../lib/i18n";
 import { debounce, getVirtualListRange, throttle } from "../../utils/performance";
 
 const ROW_HEIGHT = 50;
@@ -71,6 +73,7 @@ interface LibraryPrefs {
   sortKey:      string;
   sortDir:      "asc" | "desc";
   filterFormat: string;
+  filterDuplicate: "all" | "only" | "hide";
   groupBy:      string;
   visibleCols:  Record<string, boolean>;
 }
@@ -95,6 +98,7 @@ const DEFAULT_COLS: Record<string, boolean> = {
 export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }: Props) {
   const { songs, setSongs, isLoading, playlists, setPlaylists } = useLibraryStore() as any;
   const { currentSong, isPlaying } = usePlayerStore() as any;
+  const { t } = useLang();
 
   const [search, setSearch]             = useState("");
   const [searchInput, setSearchInput]   = useState("");
@@ -112,20 +116,24 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const [sortKey, setSortKeyRaw]        = useState<SortKey>((_prefs.sortKey as SortKey) ?? "title");
   const [sortDir, setSortDirRaw]        = useState<"asc"|"desc">(_prefs.sortDir ?? "asc");
   const [filterFormat, setFilterFormatRaw] = useState(_prefs.filterFormat ?? "all");
+  const [filterDuplicate, setFilterDuplicateRaw] = useState<"all" | "only" | "hide">(
+    (_prefs.filterDuplicate as "all" | "only" | "hide") ?? "all",
+  );
   const [groupBy, setGroupByRaw]        = useState<GroupBy>((_prefs.groupBy as GroupBy) ?? "none");
   const [visibleCols, setVisibleColsRaw] = useState<Record<string, boolean>>(
     _prefs.visibleCols ? { ...DEFAULT_COLS, ..._prefs.visibleCols } : DEFAULT_COLS
   );
 
   // Wrapper setter yang juga simpan ke localStorage
-  const setSortKey = (k: SortKey) => { setSortKeyRaw(k); saveLibraryPrefs({ sortKey: k, sortDir, filterFormat, groupBy, visibleCols }); };
-  const setSortDir = (d: "asc"|"desc") => { setSortDirRaw(d); saveLibraryPrefs({ sortKey, sortDir: d, filterFormat, groupBy, visibleCols }); };
-  const setFilterFormat = (f: string) => { setFilterFormatRaw(f); saveLibraryPrefs({ sortKey, sortDir, filterFormat: f, groupBy, visibleCols }); };
-  const setGroupBy = (g: GroupBy) => { setGroupByRaw(g); saveLibraryPrefs({ sortKey, sortDir, filterFormat, groupBy: g, visibleCols }); };
+  const setSortKey = (k: SortKey) => { setSortKeyRaw(k); saveLibraryPrefs({ sortKey: k, sortDir, filterFormat, filterDuplicate, groupBy, visibleCols }); };
+  const setSortDir = (d: "asc"|"desc") => { setSortDirRaw(d); saveLibraryPrefs({ sortKey, sortDir: d, filterFormat, filterDuplicate, groupBy, visibleCols }); };
+  const setFilterFormat = (f: string) => { setFilterFormatRaw(f); saveLibraryPrefs({ sortKey, sortDir, filterFormat: f, filterDuplicate, groupBy, visibleCols }); };
+  const setFilterDuplicate = (f: "all" | "only" | "hide") => { setFilterDuplicateRaw(f); saveLibraryPrefs({ sortKey, sortDir, filterFormat, filterDuplicate: f, groupBy, visibleCols }); };
+  const setGroupBy = (g: GroupBy) => { setGroupByRaw(g); saveLibraryPrefs({ sortKey, sortDir, filterFormat, filterDuplicate, groupBy: g, visibleCols }); };
   const setVisibleCols = (cols: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
     setVisibleColsRaw(prev => {
       const next = typeof cols === "function" ? cols(prev) : cols;
-      saveLibraryPrefs({ sortKey, sortDir, filterFormat, groupBy, visibleCols: next });
+      saveLibraryPrefs({ sortKey, sortDir, filterFormat, filterDuplicate, groupBy, visibleCols: next });
       return next;
     });
   };
@@ -135,6 +143,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const [hoveredRowId, setHoveredRowId]   = useState<number | null>(null);
   const [contextMenu, setContextMenu]     = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Song[] | null>(null);
+  const [editSong, setEditSong] = useState<Song | null>(null);
   const [showViewMenu, setShowViewMenu]   = useState(false);
   const [showFormatDrop, setShowFormatDrop] = useState(false);
   const [focusedRowIdx, setFocusedRowIdx]   = useState(-1);
@@ -167,6 +176,11 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
     return ["all", ...Array.from(set as Set<string>).sort()];
   }, [safeSongs]);
 
+  const duplicateCount = useMemo(
+    () => safeSongs.filter(s => s.is_duplicate).length,
+    [safeSongs],
+  );
+
   const filtered = useMemo(() => {
     let result = safeSongs.filter(s => {
       const q = search.toLowerCase();
@@ -174,7 +188,13 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
         s.title?.toLowerCase().includes(q) ||
         s.artist?.toLowerCase().includes(q) ||
         s.album?.toLowerCase().includes(q);
-      return matchSearch && (filterFormat === "all" || s.format?.toUpperCase() === filterFormat);
+      const matchFormat = filterFormat === "all" || s.format?.toUpperCase() === filterFormat;
+      const isDup = !!s.is_duplicate;
+      const matchDup =
+        filterDuplicate === "all" ||
+        (filterDuplicate === "only" && isDup) ||
+        (filterDuplicate === "hide" && !isDup);
+      return matchSearch && matchFormat && matchDup;
     });
     return [...result].sort((a, b) => {
       let va: any = a[sortKey as keyof Song] ?? "";
@@ -185,7 +205,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
       if (va > vb) return sortDir === "asc" ? 1 : -1;
       return 0;
     });
-  }, [safeSongs, search, sortKey, sortDir, filterFormat]);
+  }, [safeSongs, search, sortKey, sortDir, filterFormat, filterDuplicate]);
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return null;
@@ -286,11 +306,11 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
     if (sortKey === key) {
       const newDir = sortDir === "asc" ? "desc" : "asc";
       setSortDirRaw(newDir);
-      saveLibraryPrefs({ sortKey, sortDir: newDir, filterFormat, groupBy, visibleCols });
+      saveLibraryPrefs({ sortKey, sortDir: newDir, filterFormat, filterDuplicate, groupBy, visibleCols });
     } else {
       setSortKeyRaw(key);
       setSortDirRaw("asc");
-      saveLibraryPrefs({ sortKey: key, sortDir: "asc", filterFormat, groupBy, visibleCols });
+      saveLibraryPrefs({ sortKey: key, sortDir: "asc", filterFormat, filterDuplicate, groupBy, visibleCols });
     }
   };
 
@@ -542,8 +562,19 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
             fontWeight: 500, fontSize: 13,
             color: isActive ? "#c4b5fd" : "var(--text-primary)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200,
+            display: "flex", alignItems: "center", gap: 6,
           }}>
-            {song.title}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{song.title}</span>
+            {!!song.is_duplicate && (
+              <span title={t.duplicateBadge} style={{
+                flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+                padding: "1px 5px", borderRadius: 4,
+                background: "rgba(245,158,11,0.15)", color: "#f59e0b",
+                border: "1px solid rgba(245,158,11,0.35)",
+              }}>
+                {t.duplicateBadge}
+              </span>
+            )}
           </div>
           {groupBy === "folder" && (
             <div style={{ fontSize: 10, color: "var(--text-faint)" }}>{getFolderName(song.path)}</div>
@@ -640,8 +671,20 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
           onAddToQueue={handleAddToQueue}
           onAddToPlaylist={(pid, ss) => handleAddToPlaylist(pid, ss)}
           onToggleLoved={song => handleToggleLoved(song)}
+          onEditMetadata={song => setEditSong(song)}
           onShowInFolder={song => invoke("open_file_manager", { path: song.path })}
           onDelete={ss => setConfirmDelete(ss)}
+        />
+      )}
+
+      {editSong && (
+        <TagEditorModal
+          song={editSong}
+          onClose={() => setEditSong(null)}
+          onSaved={updated => {
+            setSongs((prev: Song[]) => Array.isArray(prev) ? prev.map(s => s.id === updated.id ? updated : s) : prev);
+            setEditSong(null);
+          }}
         />
       )}
 
@@ -729,6 +772,32 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Duplicate filter */}
+        {duplicateCount > 0 && (
+          <div style={{ display: "flex", gap: 3 }}>
+            {([
+              ["all", t.filterDuplicatesAll],
+              ["only", t.filterDuplicatesOnly],
+              ["hide", t.filterHideDuplicates],
+            ] as const).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setFilterDuplicate(val)}
+                style={{
+                  padding: "4px 9px", borderRadius: "var(--radius-sm, 6px)", fontSize: 11,
+                  border: "1px solid",
+                  background: filterDuplicate === val ? "rgba(245,158,11,0.15)" : "transparent",
+                  borderColor: filterDuplicate === val ? "rgba(245,158,11,0.4)" : "var(--border)",
+                  color: filterDuplicate === val ? "#f59e0b" : "var(--text-muted)",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                {label}{val === "only" ? ` (${duplicateCount})` : ""}
+              </button>
+            ))}
           </div>
         )}
 

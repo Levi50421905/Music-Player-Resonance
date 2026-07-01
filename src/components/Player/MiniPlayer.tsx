@@ -21,6 +21,7 @@ interface MiniState {
   progress: number;
   duration: number;
   volume: number;
+  lyricLine?: string;
 }
 
 // ── SVG Icons ──────────────────────────────────────────────────────────────────
@@ -165,7 +166,7 @@ export default function MiniPlayer() {
             overflow: "hidden",
             textOverflow: "ellipsis",
           }}>
-            {state.artist || "—"}
+            {state.lyricLine || state.artist || "—"}
           </div>
         </div>
 

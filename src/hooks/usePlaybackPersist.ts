@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react";
 import { audioEngine } from "../lib/audioEngine";
-import { usePlayerStore } from "../store";
+import { usePlayerStore, useSettingsStore } from "../store";
 import type { Song } from "../lib/db";
 
 const LS_KEY       = "sonarix-playback-position";
@@ -125,7 +125,8 @@ export async function restorePlaybackSession(
     const ok = await audioEngine.prepare(currentSong.path);
     if (!ok) return;
 
-    setIsPlaying(false);
+    const { resumeBehavior } = useSettingsStore.getState() as { resumeBehavior?: "auto_play" | "paused" };
+    setIsPlaying(resumeBehavior === "auto_play");
 
     if (seekTo >= MIN_TIME) {
       await seekWhenReady(seekTo);
@@ -137,6 +138,9 @@ export async function restorePlaybackSession(
         setProgress((t / d) * 100);
       }
       pendingSeek = null;
+      if (resumeBehavior === "auto_play") {
+        audioEngine.resume();
+      }
     } else {
       const d = audioEngine.duration;
       if (d > 0) {

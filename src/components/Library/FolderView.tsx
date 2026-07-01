@@ -14,6 +14,7 @@ import { getDb, deleteSongs, getPlaylists, addToPlaylist } from "../../lib/db";
 import type { Song } from "../../lib/db";
 import CoverArt from "../CoverArt";
 import SongContextMenu, { ConfirmDeleteModal, BulkActionBar } from "../SongContextMenu";
+import TagEditorModal from "./TagEditorModal";
 import { toastInfo, toastSuccess } from "../Notification/ToastSystem";
 
 interface Props {
@@ -161,6 +162,7 @@ function FolderDetail({ folder, onBack, onPlay }: {
   const [selected, setSelected]       = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; songs: Song[] } | null>(null);
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
+  const [editSong, setEditSong]       = useState<Song | null>(null);
   const [playlists, setPlaylists]     = useState<any[]>([]);
   const lastSelIdx = useRef(-1);
 
@@ -239,8 +241,17 @@ function FolderDetail({ folder, onBack, onPlay }: {
           onPlayNext={handlePlayNext}
           onAddToQueue={handleAddToQueue}
           onAddToPlaylist={handleAddToPlaylist}
+          onEditMetadata={song => setEditSong(song)}
           onShowInFolder={song => invoke("open_file_manager", { path: song.path })}
           onDelete={ss => setConfirmDel(ss)}
+        />
+      )}
+
+      {editSong && (
+        <TagEditorModal
+          song={editSong}
+          onClose={() => setEditSong(null)}
+          onSaved={() => setEditSong(null)}
         />
       )}
 
