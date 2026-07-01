@@ -24,6 +24,7 @@ import SongContextMenu, { ConfirmDeleteModal, BulkActionBar } from "../SongConte
 import TagEditorModal from "./TagEditorModal";
 import { useSettingsStore } from "../../store";
 import { useLang } from "../../lib/i18n";
+import { getQualityFromSong } from "../../lib/audioQuality";
 import { debounce, getVirtualListRange, throttle } from "../../utils/performance";
 
 const ROW_HEIGHT = 50;
@@ -97,7 +98,8 @@ const DEFAULT_COLS: Record<string, boolean> = {
 
 export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }: Props) {
   const { songs, setSongs, isLoading, playlists, setPlaylists } = useLibraryStore() as any;
-  const { currentSong, isPlaying } = usePlayerStore() as any;
+  const currentSongId = usePlayerStore(s => s.currentSong?.id ?? null);
+  const isPlaying = usePlayerStore(s => s.isPlaying);
   const { t } = useLang();
 
   const [search, setSearch]             = useState("");
@@ -152,6 +154,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   const focusedRowRef = useRef<HTMLTableRowElement>(null);
   const tableRef      = useRef<HTMLDivElement>(null);
   const lastClickRef  = useRef<{ id: number; time: number }>({ id: -1, time: 0 });
+  const singleClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSelectedIdxRef = useRef<number>(-1);
   // [FIX BUG 3] Refs for dropdown close-on-outside-click
   const viewMenuRef   = useRef<HTMLDivElement>(null);
@@ -273,10 +276,10 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
   }, []);
 
   useEffect(() => {
-    if (!currentSong || !activeRowRef.current || !tableRef.current) return;
+    if (currentSongId == null || !activeRowRef.current || !tableRef.current) return;
     const t = setTimeout(() => activeRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
     return () => clearTimeout(t);
-  }, [currentSong?.id]);
+  }, [currentSongId]);
 
   useEffect(() => {
     if (contextMenu) return;
@@ -406,9 +409,12 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
   const isDoubleClick = last.id === song.id && now - last.time < 400;
 
   if (isDoubleClick) {
+    if (singleClickTimerRef.current) {
+      clearTimeout(singleClickTimerRef.current);
+      singleClickTimerRef.current = null;
+    }
     lastClickRef.current = { id: -1, time: 0 };
 
-    // 🔥 GUNAKAN SETTING USER
     if (doubleClickAction === "queue") {
       handleAddToQueue([song]);
     } else if (doubleClickAction === "play") {
@@ -416,12 +422,17 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
     } else if (doubleClickAction === "play_next") {
       handlePlayNext([song]);
     }
-
   } else {
     lastClickRef.current = { id: song.id, time: now };
 
-    // Single click tetap play (default UX)
-    onPlay(song, list);
+    if (singleClickTimerRef.current) {
+      clearTimeout(singleClickTimerRef.current);
+    }
+    // Tunggu cukup lama agar double-click tidak memicu play di klik pertama
+    singleClickTimerRef.current = setTimeout(() => {
+      singleClickTimerRef.current = null;
+      onPlay(song, list);
+    }, 450);
   }
 }, [
   onPlay,
@@ -429,7 +440,7 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
   handlePlayNext,
   selectionMode,
   toggleSelect,
-  doubleClickAction // ← penting biar reactive
+  doubleClickAction,
 ]);
 
   const sortIcon = (key: SortKey) => sortKey !== key ? "" : sortDir === "asc" ? " ↑" : " ↓";
@@ -465,7 +476,7 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
   let absoluteIdx = 0;
 
   const renderRow = (song: Song, rowIdx: number, contextList: Song[]) => {
-    const isActive = !!currentSong?.id && song.id === currentSong.id;
+    const isActive = currentSongId != null && song.id === currentSongId;
     const isSelected = selected.has(song.id);
     const isFocused  = focusedRowIdx === rowIdx;
     const isNew      = isNewTrack(song.date_added, song.play_count);
@@ -607,7 +618,7 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
         )}
         {visibleCols.format && (
           <td style={{ padding: "0 12px 0 0" }}>
-            <FormatBadge format={song.format} bitrate={song.bitrate} />
+            <FormatBadge song={song} />
           </td>
         )}
         {visibleCols.bpm && (
@@ -1027,9 +1038,11 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function FormatBadge({ format, bitrate }: { format: string; bitrate: number }) {
-  const isLossless = ["FLAC","WAV","ALAC","APE"].includes((format ?? "").toUpperCase());
-  const br = bitrate >= 1000 ? `${Math.round(bitrate / 10) / 100}k` : `${bitrate || "?"}`;
+function FormatBadge({ song }: { song: Song }) {
+  const q = getQualityFromSong(song);
+  const fmt = (song.format ?? "").toUpperCase();
+  const isLossless = q?.tier === "lossless";
+  const label = q?.shortLabel ?? fmt;
   return (
     <span style={{
       fontSize: 10, fontFamily: "monospace", padding: "2px 5px", borderRadius: 4,
@@ -1037,29 +1050,22 @@ function FormatBadge({ format, bitrate }: { format: string; bitrate: number }) {
       border: `1px solid ${isLossless ? "rgba(16,185,129,0.3)" : "rgba(99,102,241,0.3)"}`,
       color: isLossless ? "#34D399" : "#818CF8", whiteSpace: "nowrap",
     }}>
-      {format} {br}
+      {label}
     </span>
   );
 }
+
+const PlayingBars = React.memo(function PlayingBars() {
+  return (
+    <div className="playing-bars" aria-hidden="true">
+      <span /><span /><span />
+    </div>
+  );
+});
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 ** 3)).toFixed(2)} GB`;
-}
-
-function PlayingBars() {
-  return (
-    <div style={{ display: "flex", gap: 1.5, alignItems: "flex-end", height: 14, justifyContent: "center" }}>
-      {[1,2,3].map(i => (
-        <div key={i} style={{
-          width: 2, background: "var(--accent-light, #a78bfa)", borderRadius: 1,
-          animation: `bar-dance ${0.5 + i * 0.15}s ease-in-out ${i * 0.1}s infinite alternate`,
-          height: `${4 + i * 3}px`,
-        }} />
-      ))}
-      <style>{`@keyframes bar-dance{from{height:3px}to{height:14px}}`}</style>
-    </div>
-  );
 }

@@ -31,9 +31,10 @@ export function getQualityFromSong(song: Song | null): QualityInfo | null {
     const bit = bits ? `${bits}-bit` : "";
     const parts = [bit, sr].filter(Boolean);
     const label = parts.length ? `${fmt} · ${parts.join(" ")}` : `${fmt} · Lossless`;
+    const shortLabel = parts.length ? `${fmt} ${parts.join(" ")}` : fmt;
     return {
       label,
-      shortLabel: parts.length ? `${bit} ${sr}`.trim() : fmt,
+      shortLabel,
       color: "#FBBF24",
       bgColor: "rgba(251,191,36,0.12)",
       borderColor: "rgba(251,191,36,0.35)",

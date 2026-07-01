@@ -444,6 +444,7 @@ async fn decode_audio_to_cache(
             "flac" => decode_flac(&path_clone),
             "wav"  => std::fs::read(&path_clone)
                 .map_err(|e| format!("Gagal baca WAV: {}", e)),
+            "m4a" | "mp4" | "m4b" | "aac" | "alac" => decode_symphonia(&path_clone),
             other  => Err(format!("Format tidak didukung untuk decode: {}", other)),
         }
     })
@@ -525,21 +526,23 @@ async fn decode_audio_to_wav(app: tauri::AppHandle, path: String) -> Result<Stri
 
 #[tauri::command]
 fn check_audio_support() -> Vec<String> {
-    vec!["mp3".into(), "aac".into(), "m4a".into(), "wav".into(), "ogg".into(), "opus".into()]
+    vec![
+        "mp3".into(), "aac".into(), "m4a".into(), "alac".into(),
+        "wav".into(), "ogg".into(), "opus".into(), "flac".into(),
+    ]
 }
 
 #[tauri::command]
 fn unblock_file(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let escaped = path.replace('\'', "''");
-        std::process::Command::new("powershell")
-            .args([
-                "-NoProfile", "-NonInteractive", "-Command",
-                &format!("Unblock-File -LiteralPath '{}'", escaped),
-            ])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        // Hapus Zone.Identifier ADS secara native — tanpa spawn PowerShell
+        let zone_path = format!("{}:Zone.Identifier", path);
+        match std::fs::remove_file(&zone_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Gagal unblock file: {}", e)),
+        }
         return Ok(());
     }
     #[cfg(not(target_os = "windows"))]
@@ -637,6 +640,119 @@ fn write_audio_metadata(input: MetadataInput) -> Result<(), String> {
         .map_err(|e| format!("Gagal tulis tag: {}", e))?;
 
     Ok(())
+}
+
+// ─── Symphonia decode (M4A/AAC/ALAC) ────────────────────────────────────────
+
+fn decode_symphonia(path: &str) -> Result<Vec<u8>, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Gagal buka file: {}", e))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("Format audio tidak didukung: {}", e))?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "Tidak ada track audio".to_string())?;
+
+    let track_id = track.id;
+    let codec_params = track.codec_params.clone();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("Codec audio tidak didukung: {}", e))?;
+
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut pcm_samples: Vec<i16> = Vec::new();
+    let mut sample_rate = 44_100u32;
+    let mut channels = 2u16;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(Error::ResetRequired) => {
+                decoder = symphonia::default::get_codecs()
+                    .make(&codec_params, &DecoderOptions::default())
+                    .map_err(|e| format!("Decoder reset gagal: {}", e))?;
+                continue;
+            }
+            Err(Error::IoError(ref err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(_) => break,
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                if sample_buf.is_none() {
+                    let spec = *decoded.spec();
+                    sample_rate = spec.rate;
+                    channels = spec.channels.count() as u16;
+                    sample_buf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+                }
+
+                if let Some(buf) = sample_buf.as_mut() {
+                    buf.copy_interleaved_ref(decoded);
+                    for &s in buf.samples() {
+                        let v = (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16;
+                        pcm_samples.push(v);
+                    }
+                }
+            }
+            Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => continue,
+            Err(e) => return Err(format!("Decode gagal: {}", e)),
+        }
+    }
+
+    if pcm_samples.is_empty() {
+        return Err("Tidak ada audio yang berhasil didecode".to_string());
+    }
+
+    samples_to_wav(&pcm_samples, sample_rate, channels)
+}
+
+fn samples_to_wav(samples: &[i16], sample_rate: u32, channels: u16) -> Result<Vec<u8>, String> {
+    let mut wav_data = Vec::new();
+    {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut wav_data), spec)
+            .map_err(|e| format!("Gagal buat WAV: {}", e))?;
+        for &s in samples {
+            writer
+                .write_sample(s)
+                .map_err(|e| format!("Gagal tulis sample: {}", e))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| format!("Gagal finalize WAV: {}", e))?;
+    }
+    Ok(wav_data)
 }
 
 // ─── FLAC decode ──────────────────────────────────────────────────────────────

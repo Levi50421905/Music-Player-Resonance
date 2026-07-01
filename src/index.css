@@ -756,3 +756,36 @@ button:disabled { opacity: 0.35; cursor: not-allowed; }
   color: var(--accent-light);
   background: var(--accent-dim);
 }
+
+/* Library row playing indicator */
+.playing-bars {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  justify-content: center;
+  height: 14px;
+}
+
+.playing-bars span {
+  display: block;
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--accent-light, #a78bfa);
+  transform-origin: bottom center;
+  animation: playing-bar-dance 0.55s ease-in-out infinite alternate;
+}
+
+.playing-bars span:nth-child(1) { animation-delay: 0s;    animation-duration: 0.45s; }
+.playing-bars span:nth-child(2) { animation-delay: 0.12s; animation-duration: 0.55s; }
+.playing-bars span:nth-child(3) { animation-delay: 0.24s; animation-duration: 0.65s; }
+
+@keyframes playing-bar-dance {
+  from { transform: scaleY(0.25); }
+  to   { transform: scaleY(1); }
+}
+
+.no-animations .playing-bars span {
+  animation: none;
+  transform: scaleY(0.6);
+}

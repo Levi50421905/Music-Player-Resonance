@@ -30,7 +30,7 @@ export type PreloadState = "loading" | "ready" | null;
 export const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000];
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const NEEDS_DECODE        = new Set(["flac", "ape", "wma", "alac"]);
+const NEEDS_DECODE        = new Set(["flac", "ape", "wma", "alac", "m4a", "mp4", "m4b", "aac"]);
 const CACHE_MAX_BYTES     = 1_073_741_824; // 1 GB
 const MAX_BG_DECODE       = 2;
 const VOLUME_RAMP_S       = 0.06;
@@ -52,6 +52,13 @@ function toAssetUrl(p: string): string {
 
 function getExt(p: string): string {
   return p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
+}
+
+async function tryUnblockFile(path: string): Promise<void> {
+  if (!(window as any).__TAURI_INTERNALS__) return;
+  try {
+    await invoke("unblock_file", { path });
+  } catch { /* non-Windows or no zone identifier */ }
 }
 
 // ─── Shared ArrayBuffer cache ─────────────────────────────────────────────────
@@ -304,6 +311,7 @@ export class AudioEngine {
 
   private _errorFiredForToken = -1;
   private _isDecoding = false;
+  private _unblockRetriedForToken = -1;
 
   private _wasPlayingBeforeBlur = false;
   private _audioFocusEnabled = true;
@@ -341,13 +349,33 @@ export class AudioEngine {
         console.warn(`[AudioEngine] _onError sudah dipanggil untuk token ${this._playToken}, skip duplikat`);
         return;
       }
-      this._errorFiredForToken = this._playToken;
 
-      const code    = el.error?.code ?? 0;
-      const message = el.error?.message ?? "Unknown media error";
-      console.error(`[AudioEngine] Media error slot ${slot}: code=${code} — ${message}`);
       const path = this._currentPath ?? "";
-      this._onError?.(path, `Media error ${code}: ${message}`);
+      const myToken = this._playToken;
+      const retryAfterUnblock = async () => {
+        if (!path || this._unblockRetriedForToken === myToken) return false;
+        this._unblockRetriedForToken = myToken;
+        await tryUnblockFile(path);
+        const url = toAssetUrl(path);
+        try {
+          await this._loadDirect(url, myToken);
+          if (myToken !== this._playToken) return false;
+          await el.play();
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      void (async () => {
+        if (await retryAfterUnblock()) return;
+
+        this._errorFiredForToken = this._playToken;
+        const code    = el.error?.code ?? 0;
+        const message = el.error?.message ?? "Unknown media error";
+        console.error(`[AudioEngine] Media error slot ${slot}: code=${code} — ${message}`);
+        this._onError?.(path, `Media error ${code}: ${message}`);
+      })();
     };
 
     this.elA.addEventListener("error", () => handleElError(this.elA!, "A"));
@@ -693,6 +721,7 @@ export class AudioEngine {
   // ── play() ────────────────────────────────────────────────────────────────
   async play(filePath: string): Promise<void> {
     await this.ensureInit();
+    await tryUnblockFile(filePath);
 
     // [FIX #5] Resume AudioContext secara agresif — jangan hanya cek suspended
     if (this.ctx) {
@@ -801,7 +830,7 @@ export class AudioEngine {
     this.preloadPath = null;
   }
 
-  private async _playDirect(url: string, token: number): Promise<void> {
+  private async _playDirect(url: string, token: number, isRetry = false): Promise<void> {
     await this._loadDirect(url, token);
     if (token !== this._playToken) return;
 
@@ -822,6 +851,18 @@ export class AudioEngine {
           return;
         } catch { /* tetap gagal */ }
       }
+
+      const path = this._currentPath ?? "";
+      if (!isRetry && path && this._unblockRetriedForToken !== token) {
+        this._unblockRetriedForToken = token;
+        await tryUnblockFile(path);
+        try {
+          await this._loadDirect(url, token);
+          if (token !== this._playToken) return;
+          return this._playDirect(url, token, true);
+        } catch { /* fall through */ }
+      }
+
       console.error("[AudioEngine] _playDirect error detail:", {
         name: errName,
         message: (e as Error)?.message,
@@ -831,7 +872,7 @@ export class AudioEngine {
       });
       if (token === this._playToken && this._errorFiredForToken !== token) {
         this._errorFiredForToken = token;
-        this._onError?.(this._currentPath ?? "", (e as Error).message);
+        this._onError?.(path, (e as Error).message);
       }
     }
   }
