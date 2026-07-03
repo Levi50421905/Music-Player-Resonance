@@ -61,6 +61,7 @@ import NowPlayingFullscreen from "./components/Player/NowPlayingFullscreen";
 import { generateRadioQueue, pickRandomNextSong } from "./lib/radioEngine";
 import { scrobbleTrack, updateNowPlaying } from "./lib/lastfm";
 import { hideAppSplash } from "./lib/appSplash";
+import { dismissNewTrack } from "./lib/newTrack";
 
 export type ActiveTab =
   | "home" | "library" | "favorites" | "albums" | "artists"
@@ -414,9 +415,8 @@ useEffect(() => {
     audioEngine.setMonoDownmix(!!monoDownmix);
   }, []);
 
-  const playStartTimeRef = useRef<number>(0);
-  const playDurationRef = useRef<number>(0);
   const playCountedRef = useRef<boolean>(false);
+  const maybeRecordPlayRef = useRef<(song: Song) => void>(() => {});
   // [FIX] Debounce error handling — cegah handleNext() dipanggil berkali-kali
   const lastErrorTimeRef = useRef<number>(0);
   const errorSkipCountRef = useRef<number>(0);
@@ -437,10 +437,17 @@ useEffect(() => {
         setProgress((t / audioEngine.duration) * 100);
         if (!playCountedRef.current && audioEngine.duration > 0) {
           const { playCountThreshold } = useSettingsStore.getState() as any;
-          const threshold = (playCountThreshold ?? 70) / 100;
+          const threshold = (playCountThreshold ?? 50) / 100;
+          if (t / audioEngine.duration >= 0.5) {
+            const { currentSong: cs } = usePlayerStore.getState();
+            if (cs) {
+              dismissNewTrack(cs.id);
+              useLibraryStore.getState().refreshNewBadges();
+            }
+          }
           if (t / audioEngine.duration >= threshold) {
             const { currentSong: cs } = usePlayerStore.getState();
-            if (cs) maybeRecordPlay(cs);
+            if (cs) maybeRecordPlayRef.current(cs);
           }
         }
       }
@@ -511,8 +518,6 @@ useEffect(() => {
     errorSkipCountRef.current = 0;
     setCurrentSong(song);
     setIsPlaying(true);
-    playStartTimeRef.current = Date.now();
-    playDurationRef.current = 0;
     playCountedRef.current = false;
     try {
       await audioEngine.play(song.path);
@@ -522,12 +527,10 @@ useEffect(() => {
       const elB = (audioEngine as any).elB as HTMLAudioElement | null;
       if (elA) elA.playbackRate = playbackSpeed;
       if (elB) elB.playbackRate = playbackSpeed;
-      addToHistory(song.id);
       const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret } = useSettingsStore.getState() as any;
       if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret) {
         updateNowPlaying(song, lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
       }
-      setTimeout(() => { playDurationRef.current = audioEngine.duration; }, 500);
     } catch {
       setIsPlaying(false);
       toastError("Failed to play track");
@@ -541,34 +544,38 @@ useEffect(() => {
   const maybeRecordPlay = useCallback(async (song: Song) => {
     if (playCountedRef.current) return;
     const { playCountThreshold } = useSettingsStore.getState() as any;
-    const threshold = (playCountThreshold ?? 70) / 100;
-    const elapsed = (Date.now() - playStartTimeRef.current) / 1000;
-    const duration = playDurationRef.current > 0 ? playDurationRef.current : audioEngine.duration;
-    if (duration <= 0) return;
-    const progress = elapsed / duration;
-    if (progress >= threshold) {
-      playCountedRef.current = true;
-      try {
-        const db = await getDb();
-        await recordPlay(db, song.id);
-        setSongs((prev: any) =>
-          Array.isArray(prev)
-            ? prev.map((s: Song) => s.id === song.id ? { ...s, play_count: (s.play_count || 0) + 1 } : s)
-            : prev
-        );
-        const { currentSong: cs, setCurrentSong: scs } = usePlayerStore.getState();
-        if (cs && cs.id === song.id) {
-          const { songs: latestSongs } = useLibraryStore.getState();
-          const updated = latestSongs.find((s: Song) => s.id === song.id);
-          scs({ ...cs, play_count: updated?.play_count ?? (cs.play_count || 0) + 1 });
-        }
-        const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret, scrobbleThresholdSec } = useSettingsStore.getState() as any;
-        if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret && elapsed >= (scrobbleThresholdSec ?? 30)) {
-          scrobbleTrack(song, Date.now(), lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
-        }
-      } catch {}
+    const threshold = (playCountThreshold ?? 50) / 100;
+    const engineDur = audioEngine.duration > 0 ? audioEngine.duration : (song.duration ?? 0);
+    if (engineDur <= 0) return;
+    const progress = audioEngine.currentTime / engineDur;
+    if (progress < threshold) return;
+
+    playCountedRef.current = true;
+    try {
+      const db = await getDb();
+      await recordPlay(db, song.id);
+      const newCount = (song.play_count ?? 0) + 1;
+      setSongs((prev: any) =>
+        Array.isArray(prev)
+          ? prev.map((s: Song) => s.id === song.id ? { ...s, play_count: (s.play_count || 0) + 1 } : s)
+          : prev
+      );
+      const { currentSong: cs, setCurrentSong: scs } = usePlayerStore.getState();
+      if (cs && cs.id === song.id) {
+        scs({ ...cs, play_count: newCount });
+      }
+      addToHistory(song.id);
+      const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret, scrobbleThresholdSec } = useSettingsStore.getState() as any;
+      if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret && audioEngine.currentTime >= (scrobbleThresholdSec ?? 30)) {
+        scrobbleTrack(song, Date.now(), lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
+      }
+    } catch (err) {
+      playCountedRef.current = false;
+      console.warn("[App] recordPlay failed:", err);
     }
-  }, [setSongs]);
+  }, [setSongs, addToHistory]);
+
+  maybeRecordPlayRef.current = maybeRecordPlay;
 
   const playList = useCallback((list: Song[], index = 0, contextName = "") => {
     if (!Array.isArray(list) || list.length === 0) return;

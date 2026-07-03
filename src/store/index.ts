@@ -125,6 +125,7 @@ function slimSong(s: Song): Song {
     date_added: s.date_added ?? "",
     stars: s.stars,
     has_cover: s.has_cover,
+    play_count: s.play_count ?? 0,
   };
 }
 
@@ -794,6 +795,8 @@ interface LibraryState {
   setLoading: (v: boolean) => void;
   setScanProgress: (p: LibraryState["scanProgress"]) => void;
   addSongs: (songs: Song[]) => void;
+  newBadgeTick: number;
+  refreshNewBadges: () => void;
 }
 
 export const useLibraryStore = create<LibraryState>()((set) => ({
@@ -818,6 +821,8 @@ export const useLibraryStore = create<LibraryState>()((set) => ({
     newSongs.forEach((ns) => map.set(ns.path, { ...map.get(ns.path), ...ns }));
     return { songs: Array.from(map.values()) };
   }),
+  newBadgeTick: 0,
+  refreshNewBadges: () => set(s => ({ newBadgeTick: s.newBadgeTick + 1 })),
 }));
 
 // ── Settings Store ────────────────────────────────────────────────────────────
@@ -975,7 +980,7 @@ export const useSettingsStore = create<SettingsState>()(
       sleepTimer: null, watchFolders: [], crossfadeSec: 0,
       replayGainEnabled: true, defaultVolume: 80, gaplessEnabled: true,
       autoScanOnStart: false, compactMode: false, animationSpeed: "normal",
-      doubleClickAction: "play", playCountThreshold: 70, autoFetchLyrics: true, lyricsSource: "lrclib",
+      doubleClickAction: "play", playCountThreshold: 50, autoFetchLyrics: true, lyricsSource: "lrclib",
       replayGainMode: "track",
       fadeInOnResume: false,
       fadeInDuration: 0.5,

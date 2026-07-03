@@ -12,8 +12,8 @@
  *   [DESIGN] Collapse button lebih subtle dan proper
  */
 
-import { useState, useCallback } from "react";
-import { usePlayerStore, useSettingsStore } from "../store";
+import { useState, useCallback, useMemo } from "react";
+import { usePlayerStore, useSettingsStore, useLibraryStore } from "../store";
 import BarVisualizer, { CircleVisualizer, WaveVisualizer } from "./Visualizer/BarVisualizer";
 import LyricsPanel from "./Lyrics/LyricsPanel";
 import CoverArt from "./CoverArt";
@@ -42,17 +42,30 @@ function formatBitrate(bitrate: number): string {
 }
 
 export default function Sidebar({ onRating, collapsed = false, onToggleCollapse }: Props) {
-  const { currentSong, isPlaying, currentTime, getUpNext } = usePlayerStore((s) => ({
+  const { currentSong, isPlaying, currentTime, getUpNext, duration: engineDuration } = usePlayerStore((s) => ({
     currentSong: s.currentSong,
     isPlaying: s.isPlaying,
     currentTime: s.currentTime,
     getUpNext: s.getUpNext,
+    duration: s.duration,
   }));
+  const librarySongs = useLibraryStore(s => s.songs);
   const { visualizerType, setVisualizerType, showLyrics, toggleLyrics } = useSettingsStore();
   const { t } = useLang();
   const [coverExpanded, setCoverExpanded] = useState(false);
 
-  const song     = currentSong;
+  const song = useMemo(() => {
+    if (!currentSong) return null;
+    const lib = librarySongs.find(s => s.id === currentSong.id);
+    return lib ? { ...currentSong, ...lib } : currentSong;
+  }, [currentSong, librarySongs]);
+
+  const displayDuration = useMemo(() => {
+    if (!song) return 0;
+    const libDur = song.duration ?? 0;
+    const engDur = engineDuration ?? 0;
+    return libDur > 0 ? libDur : engDur;
+  }, [song, engineDuration]);
   const upNext   = getUpNext ? getUpNext(1) : [];
   const nextSong = upNext[0]?.song ?? null;
 
@@ -321,7 +334,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
             {[
               song.genre && song.genre !== "Unknown" ? song.genre : null,
               song.year ? String(song.year) : null,
-              `${song.play_count ?? 0} plays`,
+              `${song.play_count ?? 0} ${t.plays.toLowerCase()}`,
             ].filter(Boolean).map(chip => (
               <span key={chip} style={{
                 fontSize: 11, padding: "2px 7px", borderRadius: 20,
@@ -381,7 +394,7 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
                   textTransform: "uppercase", letterSpacing: "0.1em",
                   fontWeight: 700, marginBottom: 8,
                 }}>
-                  Track details
+                  {t.trackDetails}
                 </p>
 
                 {/* Details grid */}
@@ -394,13 +407,13 @@ export default function Sidebar({ onRating, collapsed = false, onToggleCollapse 
                   border: "1px solid var(--border-subtle)",
                 }}>
                   {[
-                    { label: "Duration", value: formatDuration(song.duration) },
-                    { label: "Format",   value: `${song.format ?? "—"} · ${formatBitrate(song.bitrate)}` },
-                    { label: "BPM",      value: song.bpm ? `${Math.round(song.bpm)} BPM` : "Unknown" },
-                    { label: "Genre",    value: song.genre || "Unknown" },
-                    { label: "Year",     value: song.year?.toString() ?? "—" },
-                    { label: "Plays",    value: `${song.play_count ?? 0}` },
-                    { label: "Added",    value: song.date_added
+                    { label: t.duration, value: formatDuration(displayDuration) },
+                    { label: t.format,   value: `${song.format ?? "—"} · ${formatBitrate(song.bitrate)}` },
+                    { label: t.bpm,      value: song.bpm ? `${Math.round(song.bpm)} BPM` : t.unknown },
+                    { label: t.genre,    value: song.genre || t.unknown },
+                    { label: t.year,     value: song.year?.toString() ?? "—" },
+                    { label: t.plays,    value: `${song.play_count ?? 0}` },
+                    { label: t.added,    value: song.date_added
                         ? new Date(song.date_added).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
                         : "—" },
                   ].map(({ label, value }, idx) => (

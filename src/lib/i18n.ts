@@ -236,6 +236,8 @@ libraryEmptyDesc: "Scan folder musik untuk memulai. Sonarix mendukung MP3, FLAC,
 scanMusicFolder: "📁  Scan Folder Musik",
 playTracksToSee: "Putar beberapa lagu untuk melihatnya di sini",
 rateTracksToSee: "Beri rating ★ pada lagu untuk melihatnya di sini",
+seeAll: "Lihat Semua",
+close: "Tutup",
 // Sidebar
 hideLyrics: "♪ Sembunyikan Lirik",
 showLyrics: "♪ Tampilkan Lirik",
@@ -621,6 +623,8 @@ libraryEmptyDesc: "Scan a folder containing your music to get started. Sonarix s
 scanMusicFolder: "📁  Scan Music Folder",
 playTracksToSee: "Play some tracks to see them here",
 rateTracksToSee: "Rate tracks with ★ to see them here",
+seeAll: "See All",
+close: "Close",
 // Sidebar
 hideLyrics: "♪ Hide Lyrics",
 showLyrics: "♪ Show Lyrics",

@@ -26,6 +26,7 @@ import { useSettingsStore } from "../../store";
 import { useLang } from "../../lib/i18n";
 import { getQualityFromSong } from "../../lib/audioQuality";
 import { debounce, getVirtualListRange, throttle } from "../../utils/performance";
+import { isNewTrack } from "../../lib/newTrack";
 
 const ROW_HEIGHT = 50;
 
@@ -49,22 +50,6 @@ function getFolderName(path: string): string {
 
 function clampMenuPos(x: number, y: number, w = 220, h = 380) {
   return { x: Math.min(x, window.innerWidth - w - 8), y: Math.min(y, window.innerHeight - h - 8) };
-}
-
-/**
- * Badge NEW muncul hanya jika:
- * 1. Lagu ditambahkan dalam 7 hari terakhir
- * 2. Belum pernah diputar sama sekali (play_count === 0)
- *
- * Badge LANGSUNG hilang saat lagu pertama kali diputar karena play_count
- * di-update real-time via setSongs() di App.tsx → maybeRecordPlay().
- */
-function isNewTrack(dateAdded?: string, playCount?: number): boolean {
-  if (!dateAdded) return false;
-  // Hilang begitu diputar pertama kali
-  if ((playCount ?? 0) > 0) return false;
-  // Hanya muncul jika ditambahkan dalam 7 hari terakhir
-  return new Date(dateAdded).getTime() > Date.now() - 7 * 86400000;
 }
 
 // ── Persist library view preferences ke localStorage ─────────────────────────
@@ -97,7 +82,7 @@ const DEFAULT_COLS: Record<string, boolean> = {
 };
 
 export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }: Props) {
-  const { songs, setSongs, isLoading, playlists, setPlaylists } = useLibraryStore() as any;
+  const { songs, setSongs, isLoading, playlists, setPlaylists, newBadgeTick } = useLibraryStore() as any;
   const currentSongId = usePlayerStore(s => s.currentSong?.id ?? null);
   const isPlaying = usePlayerStore(s => s.isPlaying);
   const { t } = useLang();
@@ -208,7 +193,7 @@ export default function LibraryView({ onPlay, onRating, searchRef, onPlayNext }:
       if (va > vb) return sortDir === "asc" ? 1 : -1;
       return 0;
     });
-  }, [safeSongs, search, sortKey, sortDir, filterFormat, filterDuplicate]);
+  }, [safeSongs, search, sortKey, sortDir, filterFormat, filterDuplicate, newBadgeTick]);
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return null;
@@ -479,7 +464,7 @@ const handleRowClick = useCallback((song: Song, list: Song[], rowIdx: number, e:
     const isActive = currentSongId != null && song.id === currentSongId;
     const isSelected = selected.has(song.id);
     const isFocused  = focusedRowIdx === rowIdx;
-    const isNew      = isNewTrack(song.date_added, song.play_count);
+    const isNew      = isNewTrack(song.date_added, song.play_count, song.id);
     const isHovered  = hoveredRowId === song.id;
     // Show checkbox when: selection mode is active AND (row is hovered OR already selected)
     const showCheckbox = selectionMode && (isHovered || isSelected);

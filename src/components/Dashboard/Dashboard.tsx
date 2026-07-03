@@ -27,17 +27,37 @@ interface Props {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-function SectionHeader({ title, count }: { title: string; count?: number }) {
+function SectionHeader({ title, count, onSeeAll, seeAllLabel }: {
+  title: string;
+  count?: number;
+  onSeeAll?: () => void;
+  seeAllLabel?: string;
+}) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
       <div style={{ width: 3, height: 14, borderRadius: 2, background: "var(--accent)", flexShrink: 0 }} />
-      <h3 style={{ fontWeight: 600, fontSize: 13, color: "var(--text-primary)", letterSpacing: "-0.2px" }}>
+      <h3 style={{ fontWeight: 600, fontSize: 13, color: "var(--text-primary)", letterSpacing: "-0.2px", flex: 1 }}>
         {title}
       </h3>
       {count !== undefined && (
         <span style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'Space Mono', monospace" }}>
           {count}
         </span>
+      )}
+      {onSeeAll && (
+        <button
+          onClick={onSeeAll}
+          style={{
+            fontSize: 11, fontWeight: 600, color: "var(--accent-light)",
+            background: "transparent", border: "none", cursor: "pointer",
+            padding: "2px 6px", borderRadius: "var(--radius-sm)",
+            fontFamily: "inherit",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "var(--accent-dim)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
+          {seeAllLabel ?? "See All"}
+        </button>
       )}
     </div>
   );
@@ -52,6 +72,7 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
   const [editSong, setEditSong]       = useState<Song | null>(null);
   const [playlists, setPlaylists]     = useState<any[]>([]);
+  const [expandedList, setExpandedList] = useState<"mostPlayed" | "topRated" | null>(null);
 
   useEffect(() => {
     getDb().then(db => getPlaylists(db)).then(setPlaylists).catch(() => {});
@@ -88,15 +109,19 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   }, [history, songs]);
 
   const topByPlays = useMemo(() =>
-    [...songs].sort((a: Song, b: Song) => (b.play_count || 0) - (a.play_count || 0)).slice(0, 8),
+    [...songs].sort((a: Song, b: Song) => (b.play_count || 0) - (a.play_count || 0)),
     [songs]
   );
 
   const topByRating = useMemo(() =>
     songs.filter((s: Song) => s.stars && s.stars >= 4)
-      .sort((a: Song, b: Song) => (b.stars || 0) - (a.stars || 0))
-      .slice(0, 8),
+      .sort((a: Song, b: Song) => (b.stars || 0) - (a.stars || 0)),
     [songs]
+  );
+
+  const playedTopList = useMemo(
+    () => topByPlays.filter(s => (s.play_count ?? 0) > 0),
+    [topByPlays],
   );
 
   const listeningStreak = useMemo(() => getListeningStreak(history), [history]);
@@ -282,6 +307,83 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
           onConfirm={() => handleDeleteSongs(confirmDel)}
           onCancel={() => setConfirmDel(null)}
         />
+      )}
+
+      {expandedList && (
+        <div
+          onClick={() => setExpandedList(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 900,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: "min(520px, 100%)", maxHeight: "80vh",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-xl)",
+              display: "flex", flexDirection: "column",
+              overflow: "hidden",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)",
+            }}>
+              <h3 style={{ fontWeight: 700, fontSize: 14, color: "var(--text-primary)" }}>
+                {expandedList === "mostPlayed" ? t.mostPlayed : t.topRated}
+              </h3>
+              <button
+                onClick={() => setExpandedList(null)}
+                style={{
+                  fontSize: 12, fontWeight: 600, color: "var(--text-muted)",
+                  background: "transparent", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-md)", padding: "4px 10px",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                {t.close}
+              </button>
+            </div>
+            <div style={{ overflowY: "auto", flex: 1 }}>
+              {(expandedList === "mostPlayed" ? playedTopList : topByRating).map((song: Song, i: number, arr: Song[]) => (
+                <TrackRow
+                  key={song.id}
+                  song={song}
+                  rank={i + 1}
+                  onPlay={() => {
+                    const list = expandedList === "mostPlayed" ? playedTopList : topByRating;
+                    onPlay(list, i);
+                    setExpandedList(null);
+                  }}
+                  onContextMenu={e => handleCtxMenu(e, song, expandedList === "mostPlayed" ? playedTopList : topByRating)}
+                  onRating={onRating}
+                  isLast={i === arr.length - 1}
+                  suffix={
+                    expandedList === "mostPlayed" ? (
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "'Space Mono', monospace" }}>
+                        {song.play_count}×
+                      </span>
+                    ) : (
+                      <div style={{ display: "flex", gap: 1 }}>
+                        {[1, 2, 3, 4, 5].map(n => (
+                          <span key={n} style={{ fontSize: 10, color: n <= (song.stars ?? 0) ? "var(--warning)" : "var(--border-medium)" }}>
+                            {n <= (song.stars ?? 0) ? "★" : "☆"}
+                          </span>
+                        ))}
+                      </div>
+                    )
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Welcome + mood hint ── */}
@@ -490,21 +592,26 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* Most played */}
         <div>
-          <SectionHeader title={t.mostPlayed} />
+          <SectionHeader
+            title={t.mostPlayed}
+            count={playedTopList.length || undefined}
+            onSeeAll={playedTopList.length > 6 ? () => setExpandedList("mostPlayed") : undefined}
+            seeAllLabel={t.seeAll}
+          />
           <div style={{
             background: "var(--bg-overlay)", border: "1px solid var(--border)",
             borderRadius: "var(--radius-lg)", overflow: "hidden",
           }}>
-            {topByPlays.filter(s => (s.play_count ?? 0) > 0).slice(0, 6).length === 0 ? (
+            {playedTopList.slice(0, 6).length === 0 ? (
               <p style={{ fontSize: 12, color: "var(--text-faint)", padding: "16px", textAlign: "center" }}>
                 {t.playTracksToSee}
               </p>
             ) : (
-              topByPlays.filter(s => (s.play_count ?? 0) > 0).slice(0, 6).map((song, i, arr) => (
+              playedTopList.slice(0, 6).map((song, i, arr) => (
                 <TrackRow
                   key={song.id} song={song} rank={i + 1}
-                  onPlay={() => onPlay(topByPlays, i)}
-                  onContextMenu={e => handleCtxMenu(e, song, topByPlays)}
+                  onPlay={() => onPlay(playedTopList, i)}
+                  onContextMenu={e => handleCtxMenu(e, song, playedTopList)}
                   onRating={onRating}
                   isLast={i === arr.length - 1}
                   suffix={
@@ -520,7 +627,12 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
 
         {/* Top rated */}
         <div>
-          <SectionHeader title={t.topRated} />
+          <SectionHeader
+            title={t.topRated}
+            count={topByRating.length || undefined}
+            onSeeAll={topByRating.length > 6 ? () => setExpandedList("topRated") : undefined}
+            seeAllLabel={t.seeAll}
+          />
           <div style={{
             background: "var(--bg-overlay)", border: "1px solid var(--border)",
             borderRadius: "var(--radius-lg)", overflow: "hidden",

@@ -1270,11 +1270,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                     />
                   </SettingRow>
                   <SettingRow
-                    label={`${lang === "id" ? "Ambang play count" : "Play count threshold"} — ${playCountThreshold ?? 70}%`}
+                    label={`${lang === "id" ? "Ambang play count" : "Play count threshold"} — ${playCountThreshold ?? 50}%`}
                     desc={lang === "id" ? "Lagu dihitung 'diputar' setelah persentase ini" : "Track is counted 'played' after this percentage"}
                   >
                     <input type="range" min={10} max={95} step={5}
-                      value={playCountThreshold ?? 70}
+                      value={playCountThreshold ?? 50}
                       onChange={e => setPlayCountThreshold(+e.target.value)}
                       style={{ width: "100%" }}
                     />
