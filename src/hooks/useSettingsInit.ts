@@ -129,6 +129,18 @@ export function useSettingsInit() {
     root.style.setProperty("--accent-pink-dim", "rgba(236,72,153,0.15)");
     root.style.setProperty("--accent-pink-border", "rgba(236,72,153,0.35)");
 
+    // ── 9. Maximize window on startup ────────────────────────────────────────
+    if (settings.maximizeOnStartup !== false) {
+      (async () => {
+        try {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          await getCurrentWindow().maximize();
+        } catch {
+          // Web dev or Tauri unavailable
+        }
+      })();
+    }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // ← [] artinya HANYA dijalankan sekali saat mount, tidak re-run
 }

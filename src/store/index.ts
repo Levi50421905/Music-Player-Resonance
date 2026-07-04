@@ -13,6 +13,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Song, PlayRecord } from "../lib/db";
+import { createPlayEvent } from "../lib/parsePlayedAt";
 
 export type ShuffleMode = "off" | "all" | "songs" | "songs_and_categories";
 export type RepeatMode =
@@ -93,6 +94,7 @@ interface PlayerState {
   prevTrack: () => Song | null;
   getUpNext: (count?: number) => { song: Song; fromManual: boolean }[];
   addToHistory: (songId: number) => void;
+  addPlayRecord: (record: PlayRecord) => void;
 
   queue: Song[];
   queueIndex: number;
@@ -584,7 +586,12 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       addToHistory: (songId) => {
-        const record: PlayRecord = { song_id: songId, played_at: new Date().toISOString() };
+        const event = createPlayEvent();
+        const record: PlayRecord = { song_id: songId, ...event };
+        set((s) => ({ history: [record, ...s.history].slice(0, 500) }));
+      },
+
+      addPlayRecord: (record) => {
         set((s) => ({ history: [record, ...s.history].slice(0, 500) }));
       },
 
@@ -888,6 +895,7 @@ interface SettingsState {
   globalMediaKeys: boolean;
   closeToTray: boolean;
   startWithWindows: boolean;
+  maximizeOnStartup: boolean;
   notificationShowCover: boolean;
   lastfmEnabled: boolean;
   lastfmApiKey: string;
@@ -961,6 +969,7 @@ interface SettingsState {
   setGlobalMediaKeys: (v: boolean) => void;
   setCloseToTray: (v: boolean) => void;
   setStartWithWindows: (v: boolean) => void;
+  setMaximizeOnStartup: (v: boolean) => void;
   setNotificationShowCover: (v: boolean) => void;
   setLastfmEnabled: (v: boolean) => void;
   setLastfmApiKey: (v: string) => void;
@@ -1019,6 +1028,7 @@ export const useSettingsStore = create<SettingsState>()(
       globalMediaKeys: true,
       closeToTray: false,
       startWithWindows: false,
+      maximizeOnStartup: true,
       notificationShowCover: true,
       lastfmEnabled: false,
       lastfmApiKey: "",
@@ -1107,6 +1117,7 @@ export const useSettingsStore = create<SettingsState>()(
       setGlobalMediaKeys: (v) => set({ globalMediaKeys: v }),
       setCloseToTray: (v) => set({ closeToTray: v }),
       setStartWithWindows: (v) => set({ startWithWindows: v }),
+      setMaximizeOnStartup: (v) => set({ maximizeOnStartup: v }),
       setNotificationShowCover: (v) => set({ notificationShowCover: v }),
       setLastfmEnabled: (v) => set({ lastfmEnabled: v }),
       setLastfmApiKey: (v) => set({ lastfmApiKey: v }),

@@ -11,8 +11,8 @@ import { useLibraryStore, usePlayerStore } from "../../store";
 import { getDb, getPlaylists, addToPlaylist } from "../../lib/db";
 import type { Song } from "../../lib/db";
 import CoverArt from "../CoverArt";
-import { useLang, getDayLabels, getGreeting } from "../../lib/i18n";
-import ListeningActivityChart, { buildLast7Days } from "./ListeningActivityChart";
+import { useLang, getGreeting } from "../../lib/i18n";
+import LibraryBreakdown, { buildLibraryBreakdown, type BreakdownEntry } from "./LibraryBreakdown";
 import SongContextMenu, { ConfirmDeleteModal } from "../SongContextMenu";
 import TagEditorModal from "../Library/TagEditorModal";
 import { deleteSongs } from "../../lib/db";
@@ -72,7 +72,7 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   const [confirmDel, setConfirmDel]   = useState<Song[] | null>(null);
   const [editSong, setEditSong]       = useState<Song | null>(null);
   const [playlists, setPlaylists]     = useState<any[]>([]);
-  const [expandedList, setExpandedList] = useState<"mostPlayed" | "topRated" | null>(null);
+  const [expandedList, setExpandedList] = useState<"mostPlayed" | "topRated" | "allArtists" | "allAlbums" | null>(null);
 
   useEffect(() => {
     getDb().then(db => getPlaylists(db)).then(setPlaylists).catch(() => {});
@@ -132,71 +132,33 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   const resumeInfo = useMemo(() => getResumeQueueInfo(), [currentSong, history]);
   const insights = useMemo(() => buildListeningInsights(history, songs), [history, songs]);
 
-  const dayLabels = getDayLabels(lang);
+  const libraryBreakdown = useMemo(() => buildLibraryBreakdown(songs), [songs]);
 
-  // ── Per day-of-week breakdown (0=Sun..6=Sat), dengan raw count ──
-  const dowData = useMemo(() => {
-    const counts = new Array(7).fill(0);
-    for (const record of history) {
-      counts[new Date(record.played_at).getDay()]++;
+  const songsByArtist = useMemo(() => {
+    const map = new Map<string, Song[]>();
+    for (const s of songs) {
+      const key = s.artist?.trim() || "Unknown";
+      const list = map.get(key) ?? [];
+      list.push(s);
+      map.set(key, list);
     }
-    const max = Math.max(...counts, 1);
-    return counts.map((v, i) => ({ count: v, intensity: v / max, label: dayLabels[i] }));
-  }, [history, dayLabels]);
+    return map;
+  }, [songs]);
 
-  // ── 7 hari terakhir (termasuk hari ini) ──
-  const last7Days = useMemo(() => buildLast7Days(history, lang), [history, lang]);
-
-  // ── Per jam dalam sehari (0-23) ──
-  const hourlyData = useMemo(() => {
-    const hours = new Array(24).fill(0);
-    for (const record of history) {
-      hours[new Date(record.played_at).getHours()]++;
+  const songsByAlbumKey = useMemo(() => {
+    const map = new Map<string, Song[]>();
+    for (const s of songs) {
+      const album = s.album?.trim();
+      if (!album) continue;
+      const lower = album.toLowerCase();
+      if (lower === "unknown" || lower === "unknown album") continue;
+      const key = `${s.artist?.trim() || "Unknown"}\x00${album}`;
+      const list = map.get(key) ?? [];
+      list.push(s);
+      map.set(key, list);
     }
-    const max = Math.max(...hours, 1);
-    return hours.map((v, h) => ({ hour: h, count: v, intensity: v / max }));
-  }, [history]);
-
-  // ── Activity stats lengkap ──
-  const activityStats = useMemo(() => {
-    if (history.length === 0) return null;
-
-    // Total durasi didengarkan (estimasi dari play history × avg duration)
-    const avgDuration = songs.length > 0
-      ? songs.reduce((a: number, s: Song) => a + (s.duration || 0), 0) / songs.length
-      : 0;
-    const estimatedMinutes = Math.round((history.length * avgDuration) / 60);
-
-    // Hari paling aktif (of all time)
-    const dowCounts = new Array(7).fill(0);
-    for (const r of history) dowCounts[new Date(r.played_at).getDay()]++;
-    const busiestDowIdx = dowCounts.indexOf(Math.max(...dowCounts));
-
-    // Jam paling aktif
-    const hourCounts = new Array(24).fill(0);
-    for (const r of history) hourCounts[new Date(r.played_at).getHours()]++;
-    const peakHour = hourCounts.indexOf(Math.max(...hourCounts));
-    const peakHourLabel = peakHour < 12
-      ? `${peakHour === 0 ? 12 : peakHour} AM`
-      : `${peakHour === 12 ? 12 : peakHour - 12} PM`;
-
-    // 7 hari terakhir total
-    const today = new Date(); today.setHours(23, 59, 59, 999);
-    const sevenDaysAgo = new Date(today); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6); sevenDaysAgo.setHours(0,0,0,0);
-    const last7Count = history.filter(h => new Date(h.played_at).getTime() >= sevenDaysAgo.getTime()).length;
-    const avgPerDay7 = (last7Count / 7).toFixed(1);
-
-    return {
-      totalPlays: history.length,
-      uniqueSongs: new Set(history.map(h => h.song_id)).size,
-      estimatedMinutes,
-      estimatedHours: (estimatedMinutes / 60).toFixed(1),
-      busiestDay: dayLabels[busiestDowIdx],
-      peakHourLabel,
-      last7Count,
-      avgPerDay7,
-    };
-  }, [history, songs]);
+    return map;
+  }, [songs]);
 
   const handleCtxMenu = useCallback(async (e: React.MouseEvent, song: Song, list: Song[]) => {
     e.preventDefault();
@@ -336,7 +298,10 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
               padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)",
             }}>
               <h3 style={{ fontWeight: 700, fontSize: 14, color: "var(--text-primary)" }}>
-                {expandedList === "mostPlayed" ? t.mostPlayed : t.topRated}
+                {expandedList === "mostPlayed" ? t.mostPlayed
+                  : expandedList === "topRated" ? t.topRated
+                  : expandedList === "allArtists" ? t.topArtists
+                  : t.topAlbums}
               </h3>
               <button
                 onClick={() => setExpandedList(null)}
@@ -351,36 +316,61 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
               </button>
             </div>
             <div style={{ overflowY: "auto", flex: 1 }}>
-              {(expandedList === "mostPlayed" ? playedTopList : topByRating).map((song: Song, i: number, arr: Song[]) => (
-                <TrackRow
-                  key={song.id}
-                  song={song}
-                  rank={i + 1}
-                  onPlay={() => {
-                    const list = expandedList === "mostPlayed" ? playedTopList : topByRating;
-                    onPlay(list, i);
-                    setExpandedList(null);
-                  }}
-                  onContextMenu={e => handleCtxMenu(e, song, expandedList === "mostPlayed" ? playedTopList : topByRating)}
-                  onRating={onRating}
-                  isLast={i === arr.length - 1}
-                  suffix={
-                    expandedList === "mostPlayed" ? (
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "'Space Mono', monospace" }}>
-                        {song.play_count}×
-                      </span>
-                    ) : (
-                      <div style={{ display: "flex", gap: 1 }}>
-                        {[1, 2, 3, 4, 5].map(n => (
-                          <span key={n} style={{ fontSize: 10, color: n <= (song.stars ?? 0) ? "var(--warning)" : "var(--border-medium)" }}>
-                            {n <= (song.stars ?? 0) ? "★" : "☆"}
-                          </span>
-                        ))}
-                      </div>
-                    )
-                  }
-                />
-              ))}
+              {(expandedList === "mostPlayed" || expandedList === "topRated") && (
+                (expandedList === "mostPlayed" ? playedTopList : topByRating).map((song: Song, i: number, arr: Song[]) => (
+                  <TrackRow
+                    key={song.id}
+                    song={song}
+                    rank={i + 1}
+                    onPlay={() => {
+                      const list = expandedList === "mostPlayed" ? playedTopList : topByRating;
+                      onPlay(list, i);
+                      setExpandedList(null);
+                    }}
+                    onContextMenu={e => handleCtxMenu(e, song, expandedList === "mostPlayed" ? playedTopList : topByRating)}
+                    onRating={onRating}
+                    isLast={i === arr.length - 1}
+                    suffix={
+                      expandedList === "mostPlayed" ? (
+                        <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "'Space Mono', monospace" }}>
+                          {song.play_count}×
+                        </span>
+                      ) : (
+                        <div style={{ display: "flex", gap: 1 }}>
+                          {[1, 2, 3, 4, 5].map(n => (
+                            <span key={n} style={{ fontSize: 10, color: n <= (song.stars ?? 0) ? "var(--warning)" : "var(--border-medium)" }}>
+                              {n <= (song.stars ?? 0) ? "★" : "☆"}
+                            </span>
+                          ))}
+                        </div>
+                      )
+                    }
+                  />
+                ))
+              )}
+              {(expandedList === "allArtists" || expandedList === "allAlbums") && (
+                (expandedList === "allArtists" ? libraryBreakdown.allArtists : libraryBreakdown.allAlbums).map(
+                  (entry: BreakdownEntry, i: number, arr: BreakdownEntry[]) => (
+                    <BreakdownRow
+                      key={`${entry.name}-${entry.subtitle ?? ""}-${i}`}
+                      entry={entry}
+                      rank={i + 1}
+                      isLast={i === arr.length - 1}
+                      playsLabel={entry.plays > 0 ? t.breakdownPlays(entry.plays) : t.breakdownTracks(entry.tracks)}
+                      onPlay={() => {
+                        if (expandedList === "allArtists") {
+                          const list = songsByArtist.get(entry.name);
+                          if (list?.length) onPlay(list, 0, entry.name);
+                        } else if (entry.subtitle) {
+                          const list = songsByAlbumKey.get(`${entry.subtitle}\x00${entry.name}`);
+                          if (list?.length) onPlay(list, 0, `${entry.subtitle} — ${entry.name}`);
+                        }
+                        setExpandedList(null);
+                      }}
+                    />
+                  ),
+                )
+              )}
             </div>
           </div>
         </div>
@@ -665,99 +655,26 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
         </div>
       </div>
 
-      {/* ── Activity section ── */}
-      {history.length > 0 && activityStats && (
-        <ActivitySection
-          lang={lang}
-          t={t}
-          last7Days={last7Days}
-          dowData={dowData}
-          hourlyData={hourlyData}
-          stats={activityStats}
-        />
+      {/* ── Library profile ── */}
+      {songs.length > 0 && (
+        <div>
+          <SectionHeader title={t.libraryProfile} />
+          <LibraryBreakdown
+            lang={lang}
+            songs={songs}
+            t={t}
+            allArtistsCount={libraryBreakdown.allArtists.length}
+            allAlbumsCount={libraryBreakdown.allAlbums.length}
+            onSeeAllArtists={() => setExpandedList("allArtists")}
+            onSeeAllAlbums={() => setExpandedList("allAlbums")}
+            onPlayArtist={(artist, list) => onPlay(list, 0, artist)}
+            onPlayAlbum={(album, artist, list) => onPlay(list, 0, `${artist} — ${album}`)}
+          />
+        </div>
       )}
     </div>
   );
 }
-
-// ── Activity Section ──────────────────────────────────────────────────────────
-
-interface DowEntry    { count: number; intensity: number; label: string }
-interface Day7Entry   { date: Date; label: string; count: number; songIds: Set<number> }
-interface HourEntry   { hour: number; count: number; intensity: number }
-interface ActivityStatsData {
-  totalPlays: number;
-  uniqueSongs: number;
-  estimatedMinutes: number;
-  estimatedHours: string;
-  busiestDay: string;
-  peakHourLabel: string;
-  last7Count: number;
-  avgPerDay7: string;
-}
-
-function ActivitySection({ lang, t, last7Days, dowData, hourlyData, stats }: {
-  lang: import("../../lib/i18n").Lang;
-  t: ReturnType<typeof useLang>["t"];
-  last7Days:   Day7Entry[];
-  dowData:     DowEntry[];
-  hourlyData:  HourEntry[];
-  stats:       ActivityStatsData;
-}) {
-  const statItems = [
-    { label: t.chartTotalPlays,  value: stats.totalPlays.toLocaleString(),    sub: t.chartAllTime },
-    { label: t.chartUniqueTracks, value: stats.uniqueSongs.toLocaleString(), sub: t.chartEverPlayed },
-    { label: t.chartEstListened, value: stats.estimatedMinutes >= 60 ? `${stats.estimatedHours}h` : `${stats.estimatedMinutes}m`, sub: t.chartTotalTime },
-    { label: t.chartAverage,      value: stats.avgPerDay7,                     sub: t.chartPerDay7 },
-    { label: t.chartBusiestDay,  value: stats.busiestDay,                     sub: t.chartAllTime },
-    { label: t.chartPeakHour,     value: stats.peakHourLabel,                  sub: t.chartMostOften },
-  ];
-
-  return (
-    <div>
-      <SectionHeader title={t.listeningActivity} />
-
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 12,
-      }}>
-        {statItems.map(item => (
-          <div key={item.label} style={{
-            background: "var(--bg-overlay)", border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)", padding: "10px 11px",
-          }}>
-            <div style={{
-              fontWeight: 700, fontSize: 17, color: "var(--accent-light)",
-              fontFamily: "'Space Mono', monospace", lineHeight: 1,
-            }}>
-              {item.value}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 5, fontWeight: 600 }}>
-              {item.label}
-            </div>
-            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 2 }}>
-              {item.sub}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{
-        background: "var(--bg-overlay)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)", padding: "14px 18px",
-      }}>
-        <ListeningActivityChart
-          lang={lang}
-          t={t}
-          last7Days={last7Days}
-          dowData={dowData}
-          hourlyData={hourlyData}
-        />
-      </div>
-    </div>
-  );
-}
-
-
 
 function StatCard({ value, label, sub }: { value: string; label: string; sub: string }) {
   return (
@@ -774,6 +691,50 @@ function StatCard({ value, label, sub }: { value: string; label: string; sub: st
       </div>
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginTop: 6 }}>{label}</div>
       <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+function BreakdownRow({ entry, rank, playsLabel, onPlay, isLast }: {
+  entry: BreakdownEntry;
+  rank: number;
+  playsLabel: string;
+  onPlay: () => void;
+  isLast?: boolean;
+}) {
+  return (
+    <div
+      onClick={onPlay}
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "10px 14px", minHeight: 44,
+        borderBottom: isLast ? "none" : "1px solid var(--border-subtle)",
+        cursor: "pointer", transition: "background 0.1s",
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
+      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+    >
+      <span style={{
+        width: 18, fontSize: 11, fontFamily: "monospace", textAlign: "center", flexShrink: 0,
+        color: rank <= 3 ? "var(--warning)" : "var(--text-faint)",
+        fontWeight: rank <= 3 ? 700 : 400,
+      }}>
+        {rank}
+      </span>
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        <div style={{
+          fontWeight: 500, fontSize: 12, color: "var(--text-primary)",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {entry.name}
+        </div>
+        {entry.subtitle && (
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{entry.subtitle}</div>
+        )}
+      </div>
+      <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "'Space Mono', monospace", flexShrink: 0 }}>
+        {playsLabel}
+      </span>
     </div>
   );
 }

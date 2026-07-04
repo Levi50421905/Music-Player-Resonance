@@ -168,6 +168,9 @@ export function ExtendedSystemSettings({ lang }: { lang: "id" | "en" }) {
       <Toggle checked={!!s.globalMediaKeys} onChange={s.setGlobalMediaKeys} label="Global media keys" desc="Media Session API — play/pause saat app di belakang" />
       <Toggle checked={!!s.closeToTray} onChange={s.setCloseToTray} label={lang === "id" ? "Tutup ke tray" : "Close to tray"} desc={lang === "id" ? "Sembunyikan ke tray saat tutup window (bukan keluar)" : "Hide to tray on close instead of quitting"} />
       <Toggle checked={!!s.startWithWindows} onChange={s.setStartWithWindows} label={lang === "id" ? "Mulai dengan Windows" : "Start with Windows"} />
+      <Toggle checked={!!s.maximizeOnStartup} onChange={s.setMaximizeOnStartup}
+        label={lang === "id" ? "Maximize saat buka app" : "Maximize on startup"}
+        desc={lang === "id" ? "Buka window dalam mode layar penuh saat aplikasi dimulai" : "Open the window maximized when the app starts"} />
       <Toggle checked={s.notificationShowCover !== false} onChange={s.setNotificationShowCover} label={lang === "id" ? "Tampilkan cover di notifikasi" : "Show cover in notifications"} />
     </div>
   );

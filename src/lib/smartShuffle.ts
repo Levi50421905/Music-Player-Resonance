@@ -11,6 +11,7 @@
 
 import type { Song } from "./db";
 import { audioEngine } from "./audioEngine";
+import { parsePlayedAt } from "./parsePlayedAt";
 
 export interface PlayRecord {
   song_id: number;
@@ -35,10 +36,10 @@ export function calculateScore(song: Song, history: PlayRecord[]): number {
 
   const lastRecord = history
     .filter(h => h.song_id === song.id)
-    .sort((a, b) => new Date(b.played_at).getTime() - new Date(a.played_at).getTime())[0];
+    .sort((a, b) => parsePlayedAt(b.played_at).getTime() - parsePlayedAt(a.played_at).getTime())[0];
 
   const daysSincePlayed = lastRecord
-    ? (Date.now() - new Date(lastRecord.played_at).getTime()) / 86_400_000
+    ? (Date.now() - parsePlayedAt(lastRecord.played_at).getTime()) / 86_400_000
     : 999;
 
   // Decay bonus: 0 → 1 dalam 7 hari

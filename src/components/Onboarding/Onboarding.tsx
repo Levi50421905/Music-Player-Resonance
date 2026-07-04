@@ -156,15 +156,13 @@ function StepWelcome({
       <div style={{
         width: 80, height: 80, margin: "0 auto 28px",
         borderRadius: "var(--radius-xl)",
-        background: "linear-gradient(135deg, var(--accent), var(--accent-pink))",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 36,
+        overflow: "hidden",
         transform: logoVisible ? "scale(1) rotate(0deg)" : "scale(0.5) rotate(-20deg)",
         opacity: logoVisible ? 1 : 0,
         transition: "all 0.6s cubic-bezier(0.34,1.56,0.64,1)",
         boxShadow: "0 0 40px rgba(124,58,237,0.5), 0 0 80px rgba(236,72,153,0.2)",
       }}>
-        ♪
+        <img src="/sonarix_icon_1024.png" alt="Sonarix" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </div>
 
       <h1 style={{

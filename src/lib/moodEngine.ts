@@ -5,6 +5,7 @@
 import type { Song, PlayRecord } from "./db";
 import { generateSmartQueue } from "./smartShuffle";
 import { getLang, getMoodTimeLabels, type Lang } from "./i18n";
+import { parsePlayedAt } from "./parsePlayedAt";
 
 export type TimeSlot =
   | "early_morning" | "morning" | "afternoon"
@@ -223,7 +224,7 @@ export function getListeningStreak(history: PlayRecord[]): number {
 
   const daySet = new Set<string>();
   for (const r of history) {
-    const d = new Date(r.played_at);
+    const d = parsePlayedAt(r.played_at);
     daySet.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
   }
 
@@ -272,7 +273,7 @@ export function buildSessionContinuation(
   const result: Song[] = [];
 
   for (const r of history) {
-    const t = new Date(r.played_at);
+    const t = parsePlayedAt(r.played_at);
     if (t < yesterday || t > yEnd) continue;
     const h = t.getHours();
     if (h < windowStart || h > windowEnd) continue;
@@ -326,7 +327,7 @@ export function buildListeningInsights(
   const byId = new Map(songs.map(s => [s.id, s]));
   const hour = new Date().getHours();
 
-  const hourPlays = history.filter(h => new Date(h.played_at).getHours() === hour);
+  const hourPlays = history.filter(h => parsePlayedAt(h.played_at).getHours() === hour);
   const genreCount = new Map<string, number>();
   for (const h of hourPlays) {
     const g = byId.get(h.song_id)?.genre ?? "Unknown";
@@ -335,7 +336,7 @@ export function buildListeningInsights(
   const topGenreAtHour = [...genreCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
 
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const weekPlays = history.filter(h => new Date(h.played_at).getTime() >= weekAgo);
+  const weekPlays = history.filter(h => parsePlayedAt(h.played_at).getTime() >= weekAgo);
   const artistCount = new Map<string, number>();
   for (const h of weekPlays) {
     const a = byId.get(h.song_id)?.artist ?? "Unknown";
@@ -344,7 +345,7 @@ export function buildListeningInsights(
   const topArtistWeek = [...artistCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
 
   const hourCounts = new Array(24).fill(0);
-  for (const h of history) hourCounts[new Date(h.played_at).getHours()]++;
+  for (const h of history) hourCounts[parsePlayedAt(h.played_at).getHours()]++;
   const peak = hourCounts.indexOf(Math.max(...hourCounts));
   const peakHour = `${peak}:00`;
 

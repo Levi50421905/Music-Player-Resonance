@@ -1660,11 +1660,9 @@ function AboutSection({ lang }: { lang: Lang }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center", paddingTop: 16 }}>
-      <div style={{
-        width: 60, height: 60, borderRadius: 16,
-        background: "linear-gradient(135deg, var(--accent), #EC4899)",
-        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26,
-      }}>♪</div>
+      <img src="/sonarix_icon_1024.png" alt="Sonarix" style={{
+        width: 60, height: 60, borderRadius: 16, objectFit: "cover",
+      }} />
       <div style={{ textAlign: "center" }}>
         <h2 style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: "var(--text-primary)" }}>Sonarix</h2>
         <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>Version 1.2.0</p>

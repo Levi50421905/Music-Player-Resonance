@@ -7,6 +7,7 @@ import { appLocalDataDir, resourceDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import { mkdir, copyFile, stat } from "@tauri-apps/plugin-fs";
 import { persistCoverArt, resolveCoverArtUrl } from "./coverArt";
+import { createPlayEvent, enrichPlayRecord } from "./parsePlayedAt";
 
 let _db: Database | null = null;
 let _dbPath: string | null = null;
@@ -167,6 +168,7 @@ async function migrate(db: Database) {
     "ALTER TABLE songs ADD COLUMN sample_rate INTEGER",
     "ALTER TABLE songs ADD COLUMN bits_per_sample INTEGER",
     "ALTER TABLE songs ADD COLUMN is_duplicate INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE play_history ADD COLUMN play_day TEXT",
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column exists */ }
@@ -213,6 +215,7 @@ export interface Song {
 export interface PlayRecord {
   song_id: number;
   played_at: string;
+  play_day: string;
 }
 
 const SONG_LIST_SELECT = `
@@ -349,15 +352,21 @@ export async function getLovedSongs(db: Database): Promise<Song[]> {
   return rows.map(mapSongRow);
 }
 
-export async function recordPlay(db: Database, songId: number) {
-  await db.execute(`INSERT INTO play_history (song_id) VALUES ($1)`, [songId]);
+export async function recordPlay(db: Database, songId: number): Promise<PlayRecord> {
+  const { played_at, play_day } = createPlayEvent();
+  await db.execute(
+    `INSERT INTO play_history (song_id, played_at, play_day) VALUES ($1, $2, $3)`,
+    [songId, played_at, play_day],
+  );
+  return { song_id: songId, played_at, play_day };
 }
 
-export async function getPlayHistory(db: Database, limit = 200) {
-  return await db.select<PlayRecord[]>(
-    `SELECT song_id, played_at FROM play_history ORDER BY played_at DESC LIMIT $1`,
-    [limit]
+export async function getPlayHistory(db: Database, limit = 500) {
+  const rows = await db.select<{ song_id: number; played_at: unknown; play_day?: string | null }[]>(
+    `SELECT song_id, played_at, play_day FROM play_history ORDER BY played_at DESC LIMIT $1`,
+    [limit],
   );
+  return rows.map(enrichPlayRecord);
 }
 
 export async function createPlaylist(db: Database, name: string): Promise<number> {

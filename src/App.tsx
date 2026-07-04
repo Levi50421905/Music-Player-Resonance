@@ -27,6 +27,7 @@ import { useMiniPlayer, useMiniPlayerCommands } from "./components/Player/useMin
 import { useKeyboardShortcuts } from "./components/Player/useKeyboardShortcuts";
 import { useTrackNotification, requestNotificationPermission } from "./components/Notification/useTrackNotification";
 import type { Song } from "./lib/db";
+import { enrichPlayRecord } from "./lib/parsePlayedAt";
 import { hydrateBookmarks } from "./lib/bookmarks";
 
 // ── [NEW] Import 3 hal baru ──────────────────────────────────────────────────
@@ -252,7 +253,7 @@ useEffect(() => {
   const {
     currentSong, isPlaying, volume, progress,
     setCurrentSong, setIsPlaying, setProgress, setCurrentTime,
-    setDuration, nextTrack, prevTrack, addToHistory, setPlayContext,
+    setDuration, nextTrack, prevTrack, addPlayRecord, setPlayContext,
     cycleShuffleMode, cycleRepeatMode,
     playNextTrack,
     unifiedQueue,
@@ -365,10 +366,7 @@ useEffect(() => {
         if (Array.isArray(playHistory) && playHistory.length > 0) {
           // Bulk-set: directly write to store state bypassing addToHistory's 500-cap logic
           usePlayerStore.setState(s => ({
-            history: playHistory.slice(0, 500).map(r => ({
-              song_id: r.song_id,
-              played_at: r.played_at,
-            })),
+            history: playHistory.slice(0, 500).map(r => enrichPlayRecord(r)),
           }));
         }
         if ("requestIdleCallback" in window) {
@@ -553,7 +551,7 @@ useEffect(() => {
     playCountedRef.current = true;
     try {
       const db = await getDb();
-      await recordPlay(db, song.id);
+      const record = await recordPlay(db, song.id);
       const newCount = (song.play_count ?? 0) + 1;
       setSongs((prev: any) =>
         Array.isArray(prev)
@@ -564,7 +562,7 @@ useEffect(() => {
       if (cs && cs.id === song.id) {
         scs({ ...cs, play_count: newCount });
       }
-      addToHistory(song.id);
+      addPlayRecord(record);
       const { lastfmEnabled, lastfmApiKey, lastfmSessionKey, lastfmApiSecret, scrobbleThresholdSec } = useSettingsStore.getState() as any;
       if (lastfmEnabled && lastfmApiKey && lastfmSessionKey && lastfmApiSecret && audioEngine.currentTime >= (scrobbleThresholdSec ?? 30)) {
         scrobbleTrack(song, Date.now(), lastfmApiKey, lastfmSessionKey, lastfmApiSecret).catch(() => {});
@@ -573,7 +571,7 @@ useEffect(() => {
       playCountedRef.current = false;
       console.warn("[App] recordPlay failed:", err);
     }
-  }, [setSongs, addToHistory]);
+  }, [setSongs, addPlayRecord]);
 
   maybeRecordPlayRef.current = maybeRecordPlay;
 
@@ -854,7 +852,7 @@ useEffect(() => {
           <nav className="tab-nav">
             {/* Logo */}
             <div className="logo">
-              <div className="logo-icon">♪</div>
+              <img className="logo-icon" src="/sonarix_icon_1024.png" alt="Sonarix" />
               <span className="logo-text">Sonarix</span>
             </div>
 
