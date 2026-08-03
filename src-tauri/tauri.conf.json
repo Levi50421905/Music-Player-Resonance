@@ -82,8 +82,9 @@
       "nsis": {
         "displayLanguageSelector": false,
         "installMode": "currentUser",
+        "installerIcon": "icons/installer.ico",
         "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sonarixside.bmp",
+        "sidebarImage": "icons/sidebar.bmp",
         "installerHooks": "./windows/hooks.nsh"
       }
     }

@@ -114,8 +114,13 @@ export default function Dashboard({ onPlay, onRating, onScanFolder }: Props) {
   );
 
   const topByRating = useMemo(() =>
-    songs.filter((s: Song) => s.stars && s.stars >= 4)
-      .sort((a: Song, b: Song) => (b.stars || 0) - (a.stars || 0)),
+    songs
+      .filter((s: Song) => s.stars && s.stars > 0)
+      .sort((a: Song, b: Song) => {
+        const starDiff = (b.stars || 0) - (a.stars || 0);
+        if (starDiff !== 0) return starDiff;
+        return (b.play_count || 0) - (a.play_count || 0);
+      }),
     [songs]
   );
 
